@@ -57,6 +57,26 @@ async function initDB(database: SQLite.SQLiteDatabase): Promise<void> {
       downloaded_at TEXT DEFAULT (datetime('now','localtime'))
     );
 
+    CREATE TABLE IF NOT EXISTS undo_stack (
+      undo_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sample_id TEXT NOT NULL,
+      item_name TEXT NOT NULL,
+      previous_value REAL,
+      action_type TEXT DEFAULT 'set',
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS custom_terms (
+      term TEXT PRIMARY KEY,
+      added_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS value_ranges (
+      item_name TEXT PRIMARY KEY,
+      min_value REAL NOT NULL,
+      max_value REAL NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sample_key
       ON samples(survey_date, farm_name, tree_no, fruit_no);
     CREATE INDEX IF NOT EXISTS idx_sample_sync
@@ -294,4 +314,52 @@ export async function clearAllData(): Promise<void> {
     DELETE FROM samples;
     DELETE FROM history_cache;
   `);
+}
+
+// ─── Custom Terms ─────────────────────────────────────────────────────────────
+
+export async function getCustomTerms(): Promise<string[]> {
+  const db = await getDB();
+  const rows = await db.getAllAsync<{ term: string }>(
+    'SELECT term FROM custom_terms ORDER BY added_at ASC'
+  );
+  return rows.map(r => r.term);
+}
+
+export async function addCustomTerm(term: string): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(
+    `INSERT OR IGNORE INTO custom_terms (term) VALUES (?)`,
+    [term]
+  );
+}
+
+export async function removeCustomTerm(term: string): Promise<void> {
+  const db = await getDB();
+  await db.runAsync('DELETE FROM custom_terms WHERE term = ?', [term]);
+}
+
+// ─── Value Ranges ─────────────────────────────────────────────────────────────
+
+export async function getValueRanges(): Promise<Record<string, { min: number; max: number }>> {
+  const db = await getDB();
+  const rows = await db.getAllAsync<{ item_name: string; min_value: number; max_value: number }>(
+    'SELECT item_name, min_value, max_value FROM value_ranges'
+  );
+  const result: Record<string, { min: number; max: number }> = {};
+  rows.forEach(r => { result[r.item_name] = { min: r.min_value, max: r.max_value }; });
+  return result;
+}
+
+export async function setValueRange(itemName: string, min: number, max: number): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(
+    `INSERT OR REPLACE INTO value_ranges (item_name, min_value, max_value) VALUES (?, ?, ?)`,
+    [itemName, min, max]
+  );
+}
+
+export async function resetValueRange(itemName: string): Promise<void> {
+  const db = await getDB();
+  await db.runAsync('DELETE FROM value_ranges WHERE item_name = ?', [itemName]);
 }

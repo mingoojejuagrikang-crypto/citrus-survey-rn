@@ -3,8 +3,9 @@ import {
   useSpeechRecognitionEvent,
   type ExpoSpeechRecognitionResultEvent,
 } from 'expo-speech-recognition';
-import { CONTEXTUAL_STRINGS } from '../utils/constants';
-import { parseBestAlternative, ParsedCommand } from './ParserService';
+import { BASE_CONTEXTUAL_STRINGS } from '../utils/constants';
+import { parseBestAlternative, ParsedToken } from './ParserService';
+import { getCustomTerms } from './DatabaseService';
 
 // ─── 권한 ─────────────────────────────────────────────────────────────────────
 
@@ -13,15 +14,27 @@ export async function requestPermissions(): Promise<boolean> {
   return speechPerm.granted;
 }
 
+// ─── contextualStrings 빌드 ────────────────────────────────────────────────────
+
+export async function buildContextualStrings(): Promise<string[]> {
+  try {
+    const customTerms = await getCustomTerms();
+    return [...BASE_CONTEXTUAL_STRINGS, ...customTerms];
+  } catch {
+    return [...BASE_CONTEXTUAL_STRINGS];
+  }
+}
+
 // ─── 음성인식 시작/중지 ────────────────────────────────────────────────────────
 
-export function startRecognition() {
+export async function startRecognition(customStrings?: string[]): Promise<void> {
+  const contextualStrings = customStrings ?? await buildContextualStrings();
   ExpoSpeechRecognitionModule.start({
     lang: 'ko-KR',
     interimResults: false,
     maxAlternatives: 5,
     continuous: true,
-    contextualStrings: CONTEXTUAL_STRINGS,
+    contextualStrings,
     requiresOnDeviceRecognition: false,
     addsPunctuation: false,
   });
@@ -36,8 +49,6 @@ export function abortRecognition() {
 }
 
 // ─── 개별 발화 녹음 (stub — expo-av SDK 55 호환 대기 중) ──────────────────────
-// expo-av는 SDK 55와 호환 문제로 임시 비활성화.
-// 음성인식 자체는 정상 작동함.
 
 export async function startClipRecording(): Promise<void> {
   // TODO: expo-av SDK 55 호환 버전 출시 후 활성화
@@ -52,12 +63,10 @@ export async function stopClipRecording(): Promise<string | null> {
 
 export { useSpeechRecognitionEvent };
 
-export function parseRecognitionResult(event: ExpoSpeechRecognitionResultEvent): ParsedCommand {
+export function parseRecognitionResult(event: ExpoSpeechRecognitionResultEvent): ParsedToken[] {
   const alternatives = event.results?.[0]
     ? [event.results[0].transcript, ...(event.results.slice(1).map(r => r.transcript))]
     : [];
-  if (alternatives.length === 0) {
-    return { type: 'unknown', rawText: '', score: 0 };
-  }
+  if (alternatives.length === 0) return [];
   return parseBestAlternative(alternatives);
 }

@@ -1,13 +1,33 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
   TextInput, TouchableOpacity, Alert,
-  Switch, ActivityIndicator,
+  ActivityIndicator, Modal,
 } from 'react-native';
 import { useSurveyStore } from '../stores/SurveyStore';
-import { COLORS, SURVEY_TYPES, SurveyType } from '../utils/constants';
-import { getConfig, setConfig, clearAllData } from '../services/DatabaseService';
+import { COLORS, SURVEY_TYPES, SurveyType, DEFAULT_VALUE_RANGES, FIELD_UNITS } from '../utils/constants';
+import {
+  getConfig, setConfig, clearAllData,
+  getCustomTerms, addCustomTerm, removeCustomTerm,
+  getValueRanges, setValueRange, resetValueRange,
+} from '../services/DatabaseService';
+import { invalidateRangeCache } from '../services/ValidationService';
 import { fetchAndCacheHistory } from '../services/HistoryService';
+
+// ─── 항목 도움말 ──────────────────────────────────────────────────────────────
+const FIELD_HELP: Record<string, string> = {
+  횡경: '과실의 가로(적도) 지름 (mm). 기본 범위: 10~100mm.',
+  종경: '과실의 세로(꼭지-배꼽) 길이 (mm). 기본 범위: 10~100mm.',
+  과중: '과실 전체 무게 (g). 기본 범위: 5~300g.',
+  당도: '굴절당도계 측정값 (Brix). 기본 범위: 3~25.',
+  적정: '적정산도 (%). 기본 범위: 0.1~10.',
+  산함량: '총 산함량 (%). 기본 범위: 0.1~10.',
+  착색: '착색 비율 (%). 기본 범위: 0~100.',
+  비파괴: '비파괴 당도계 측정값 (Brix). 기본 범위: 3~25.',
+};
+
+// 범위 설정 대상 항목
+const RANGE_FIELDS = Object.keys(DEFAULT_VALUE_RANGES);
 
 export default function SettingsScreen() {
   const {
@@ -26,22 +46,45 @@ export default function SettingsScreen() {
   const [defaultLabel, setDefaultLabel] = useState(session.label);
   const [defaultTreatment, setDefaultTreatment] = useState(session.treatment);
 
-  useEffect(() => {
-    // DB에서 설정 로드
-    async function load() {
-      const obs = await getConfig('observer');
-      const url = await getConfig('webAppUrl');
-      const farms = await getConfig('farmList');
-      const label = await getConfig('defaultLabel');
-      const treatment = await getConfig('defaultTreatment');
-      if (obs) { setObserverLocal(obs); setSession({ observer: obs }); }
-      if (url) { setWebUrl(url); setWebAppUrl(url); }
-      if (farms) setFarmList(JSON.parse(farms));
-      if (label) { setDefaultLabel(label); setSession({ label }); }
-      if (treatment) { setDefaultTreatment(treatment); setSession({ treatment }); }
-    }
-    load();
+  // 전문용어
+  const [customTerms, setCustomTerms] = useState<string[]>([]);
+  const [newTerm, setNewTerm] = useState('');
+
+  // 범위 설정
+  const [rangeInputs, setRangeInputs] = useState<Record<string, { min: string; max: string }>>({});
+  const [helpField, setHelpField] = useState<string | null>(null);
+
+  const loadAll = useCallback(async () => {
+    const [obs, url, farms, label, treatment, terms, dbRanges] = await Promise.all([
+      getConfig('observer'),
+      getConfig('webAppUrl'),
+      getConfig('farmList'),
+      getConfig('defaultLabel'),
+      getConfig('defaultTreatment'),
+      getCustomTerms(),
+      getValueRanges(),
+    ]);
+    if (obs) { setObserverLocal(obs); setSession({ observer: obs }); }
+    if (url) { setWebUrl(url); setWebAppUrl(url); }
+    if (farms) setFarmList(JSON.parse(farms));
+    if (label) { setDefaultLabel(label); setSession({ label }); }
+    if (treatment) { setDefaultTreatment(treatment); setSession({ treatment }); }
+    setCustomTerms(terms);
+
+    // 범위 input 초기화: DB 값 우선, 없으면 기본값
+    const inputs: Record<string, { min: string; max: string }> = {};
+    RANGE_FIELDS.forEach(field => {
+      const db = dbRanges[field];
+      const def = DEFAULT_VALUE_RANGES[field];
+      inputs[field] = {
+        min: String(db ? db.min : def.min),
+        max: String(db ? db.max : def.max),
+      };
+    });
+    setRangeInputs(inputs);
   }, []);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
 
   async function handleSave() {
     setSaving(true);
@@ -53,6 +96,19 @@ export default function SettingsScreen() {
       await setConfig('defaultTreatment', defaultTreatment);
       setSession({ observer, label: defaultLabel, treatment: defaultTreatment });
       setWebAppUrl(webUrl);
+
+      // 범위 저장
+      for (const field of RANGE_FIELDS) {
+        const inp = rangeInputs[field];
+        if (!inp) continue;
+        const mn = parseFloat(inp.min);
+        const mx = parseFloat(inp.max);
+        if (!isNaN(mn) && !isNaN(mx) && mn < mx) {
+          await setValueRange(field, mn, mx);
+        }
+      }
+      invalidateRangeCache();
+
       Alert.alert('저장 완료', '설정이 저장되었습니다.');
     } finally {
       setSaving(false);
@@ -62,9 +118,7 @@ export default function SettingsScreen() {
   function handleAddFarm() {
     const trimmed = newFarm.trim();
     if (!trimmed) return;
-    if (farmList.includes(trimmed)) {
-      Alert.alert('알림', '이미 있는 농가명입니다.'); return;
-    }
+    if (farmList.includes(trimmed)) { Alert.alert('알림', '이미 있는 농가명입니다.'); return; }
     setFarmList([...farmList, trimmed]);
     setNewFarm('');
   }
@@ -74,6 +128,30 @@ export default function SettingsScreen() {
       { text: '취소', style: 'cancel' },
       { text: '삭제', style: 'destructive', onPress: () => setFarmList(farmList.filter(f => f !== name)) },
     ]);
+  }
+
+  async function handleAddTerm() {
+    const trimmed = newTerm.trim();
+    if (!trimmed) return;
+    if (customTerms.includes(trimmed)) { Alert.alert('알림', '이미 등록된 용어입니다.'); return; }
+    await addCustomTerm(trimmed);
+    setCustomTerms([...customTerms, trimmed]);
+    setNewTerm('');
+  }
+
+  async function handleRemoveTerm(term: string) {
+    await removeCustomTerm(term);
+    setCustomTerms(customTerms.filter(t => t !== term));
+  }
+
+  async function handleResetRange(field: string) {
+    await resetValueRange(field);
+    invalidateRangeCache();
+    const def = DEFAULT_VALUE_RANGES[field];
+    setRangeInputs(prev => ({
+      ...prev,
+      [field]: { min: String(def.min), max: String(def.max) },
+    }));
   }
 
   async function handleDownloadHistory() {
@@ -91,26 +169,22 @@ export default function SettingsScreen() {
   }
 
   async function handleClearData() {
-    Alert.alert(
-      '데이터 초기화',
-      '모든 조사 데이터가 삭제됩니다. 계속하시겠습니까?',
-      [
-        { text: '취소', style: 'cancel' },
-        {
-          text: '초기화',
-          style: 'destructive',
-          onPress: async () => {
-            await clearAllData();
-            Alert.alert('완료', '데이터가 초기화되었습니다.');
-          },
+    Alert.alert('데이터 초기화', '모든 조사 데이터가 삭제됩니다. 계속하시겠습니까?', [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '초기화', style: 'destructive',
+        onPress: async () => {
+          await clearAllData();
+          Alert.alert('완료', '데이터가 초기화되었습니다.');
         },
-      ]
-    );
+      },
+    ]);
   }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* 조사자 이름 */}
+
+      {/* 조사자 정보 */}
       <Section title="조사자 정보">
         <SettingRow label="조사자 이름">
           <TextInput
@@ -158,7 +232,7 @@ export default function SettingsScreen() {
         </SettingRow>
       </Section>
 
-      {/* Google Sheets */}
+      {/* Google Sheets 연동 */}
       <Section title="Google Sheets 연동">
         <SettingRow label="앱스 스크립트 URL">
           <TextInput
@@ -176,14 +250,14 @@ export default function SettingsScreen() {
       {/* 농가 목록 */}
       <Section title="농가 목록">
         {farmList.map(farm => (
-          <View key={farm} style={styles.farmRow}>
-            <Text style={styles.farmName}>{farm}</Text>
+          <View key={farm} style={styles.listRow}>
+            <Text style={styles.listItem}>{farm}</Text>
             <TouchableOpacity onPress={() => handleRemoveFarm(farm)}>
-              <Text style={{ color: COLORS.error, fontSize: 18 }}>✕</Text>
+              <Text style={styles.removeBtn}>✕</Text>
             </TouchableOpacity>
           </View>
         ))}
-        <View style={styles.addFarmRow}>
+        <View style={styles.addRow}>
           <TextInput
             style={[styles.input, { flex: 1 }]}
             value={newFarm}
@@ -195,6 +269,83 @@ export default function SettingsScreen() {
             <Text style={styles.addBtnText}>추가</Text>
           </TouchableOpacity>
         </View>
+      </Section>
+
+      {/* 전문용어 등록 */}
+      <Section title="음성인식 전문용어">
+        <Text style={styles.sectionNote}>
+          등록된 용어는 음성인식 contextualStrings에 추가되어 인식률이 향상됩니다.
+        </Text>
+        {customTerms.length === 0 && (
+          <Text style={styles.emptyNote}>등록된 용어 없음</Text>
+        )}
+        {customTerms.map(term => (
+          <View key={term} style={styles.listRow}>
+            <Text style={styles.listItem}>{term}</Text>
+            <TouchableOpacity onPress={() => handleRemoveTerm(term)}>
+              <Text style={styles.removeBtn}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        ))}
+        <View style={styles.addRow}>
+          <TextInput
+            style={[styles.input, { flex: 1 }]}
+            value={newTerm}
+            onChangeText={setNewTerm}
+            placeholder="예: 노란반점, 궤양"
+            placeholderTextColor={COLORS.textDim}
+          />
+          <TouchableOpacity style={styles.addBtn} onPress={handleAddTerm}>
+            <Text style={styles.addBtnText}>추가</Text>
+          </TouchableOpacity>
+        </View>
+      </Section>
+
+      {/* 입력값 범위 설정 */}
+      <Section title="입력값 범위 설정">
+        <Text style={styles.sectionNote}>
+          범위를 벗어난 값 입력 시 TTS 경고가 발생합니다. 저장 버튼을 눌러야 반영됩니다.
+        </Text>
+        {RANGE_FIELDS.map(field => {
+          const inp = rangeInputs[field] ?? { min: '', max: '' };
+          const unit = FIELD_UNITS[field] || '';
+          const hasHelp = !!FIELD_HELP[field];
+          return (
+            <View key={field} style={styles.rangeRow}>
+              <View style={styles.rangeLabel}>
+                <Text style={styles.rangeLabelText}>{field}</Text>
+                {unit ? <Text style={styles.rangeUnit}>{unit}</Text> : null}
+                {hasHelp && (
+                  <TouchableOpacity onPress={() => setHelpField(field)} style={styles.helpBtn}>
+                    <Text style={styles.helpBtnText}>ⓘ</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <View style={styles.rangeInputs}>
+                <TextInput
+                  style={styles.rangeInput}
+                  value={inp.min}
+                  onChangeText={v => setRangeInputs(prev => ({ ...prev, [field]: { ...prev[field], min: v } }))}
+                  keyboardType="decimal-pad"
+                  placeholder="최솟값"
+                  placeholderTextColor={COLORS.textDim}
+                />
+                <Text style={styles.rangeSep}>~</Text>
+                <TextInput
+                  style={styles.rangeInput}
+                  value={inp.max}
+                  onChangeText={v => setRangeInputs(prev => ({ ...prev, [field]: { ...prev[field], max: v } }))}
+                  keyboardType="decimal-pad"
+                  placeholder="최댓값"
+                  placeholderTextColor={COLORS.textDim}
+                />
+                <TouchableOpacity onPress={() => handleResetRange(field)} style={styles.resetBtn}>
+                  <Text style={styles.resetBtnText}>초기화</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        })}
       </Section>
 
       {/* 과거 데이터 다운로드 */}
@@ -223,25 +374,23 @@ export default function SettingsScreen() {
           onPress={handleDownloadHistory}
           disabled={downloading}
         >
-          {downloading ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Text style={styles.downloadBtnText}>과거 데이터 다운로드</Text>
-          )}
+          {downloading
+            ? <ActivityIndicator size="small" color="#fff" />
+            : <Text style={styles.downloadBtnText}>과거 데이터 다운로드</Text>
+          }
         </TouchableOpacity>
       </Section>
 
-      {/* 저장 버튼 */}
+      {/* 저장 */}
       <TouchableOpacity
         style={[styles.saveBtn, saving && { opacity: 0.6 }]}
         onPress={handleSave}
         disabled={saving}
       >
-        {saving ? (
-          <ActivityIndicator size="small" color="#fff" />
-        ) : (
-          <Text style={styles.saveBtnText}>설정 저장</Text>
-        )}
+        {saving
+          ? <ActivityIndicator size="small" color="#fff" />
+          : <Text style={styles.saveBtnText}>설정 저장</Text>
+        }
       </TouchableOpacity>
 
       {/* 데이터 초기화 */}
@@ -249,10 +398,30 @@ export default function SettingsScreen() {
         <Text style={styles.dangerBtnText}>데이터 초기화</Text>
       </TouchableOpacity>
 
-      <Text style={styles.version}>감귤 생육조사 v1.0.0</Text>
+      <Text style={styles.version}>감귤 생육조사 v3.0.0</Text>
+
+      {/* 도움말 모달 */}
+      <Modal visible={helpField !== null} transparent animationType="fade">
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setHelpField(null)}
+        >
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>{helpField} 도움말</Text>
+            <Text style={styles.modalBody}>{helpField ? FIELD_HELP[helpField] : ''}</Text>
+            <TouchableOpacity style={styles.modalClose} onPress={() => setHelpField(null)}>
+              <Text style={styles.modalCloseText}>닫기</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
     </ScrollView>
   );
 }
+
+// ─── 공통 컴포넌트 ────────────────────────────────────────────────────────────
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -272,9 +441,12 @@ function SettingRow({ label, children }: { label: string; children: React.ReactN
   );
 }
 
+// ─── 스타일 ──────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
   content: { padding: 12, paddingBottom: 60 },
+
   section: { marginBottom: 16 },
   sectionTitle: {
     color: COLORS.textMuted, fontSize: 12, fontWeight: '600',
@@ -286,6 +458,17 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: COLORS.border,
     overflow: 'hidden',
   },
+  sectionNote: {
+    color: COLORS.textDim, fontSize: 11,
+    paddingHorizontal: 14, paddingTop: 10, paddingBottom: 4,
+    lineHeight: 16,
+  },
+  emptyNote: {
+    color: COLORS.textDim, fontSize: 12,
+    paddingHorizontal: 14, paddingVertical: 8,
+    fontStyle: 'italic',
+  },
+
   settingRow: {
     flexDirection: 'row', alignItems: 'center',
     paddingVertical: 10, paddingHorizontal: 14,
@@ -294,6 +477,7 @@ const styles = StyleSheet.create({
   },
   settingLabel: { color: COLORS.textMuted, fontSize: 13, minWidth: 90 },
   settingValue: { flex: 1 },
+
   input: {
     backgroundColor: COLORS.card,
     borderRadius: 8,
@@ -302,21 +486,25 @@ const styles = StyleSheet.create({
     paddingVertical: 8, paddingHorizontal: 12,
     borderWidth: 1, borderColor: COLORS.border,
   },
-  typeSelector: { flexDirection: 'row', gap: 8 },
+
+  typeSelector: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
   typeBtn: {
-    paddingVertical: 6, paddingHorizontal: 14,
+    paddingVertical: 6, paddingHorizontal: 12,
     borderRadius: 8, backgroundColor: COLORS.card,
     borderWidth: 1, borderColor: COLORS.border,
   },
   typeBtnActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-  typeBtnText: { color: COLORS.textMuted, fontSize: 13 },
-  farmRow: {
+  typeBtnText: { color: COLORS.textMuted, fontSize: 12 },
+
+  listRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingVertical: 10, paddingHorizontal: 14,
     borderBottomWidth: 1, borderBottomColor: COLORS.border + '80',
   },
-  farmName: { color: COLORS.text, fontSize: 14 },
-  addFarmRow: {
+  listItem: { color: COLORS.text, fontSize: 14 },
+  removeBtn: { color: COLORS.error, fontSize: 18, paddingHorizontal: 4 },
+
+  addRow: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     padding: 10,
   },
@@ -325,30 +513,75 @@ const styles = StyleSheet.create({
     paddingVertical: 8, paddingHorizontal: 16,
   },
   addBtnText: { color: '#fff', fontWeight: '600', fontSize: 13 },
+
+  // 범위 설정
+  rangeRow: {
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border + '80',
+    gap: 6,
+  },
+  rangeLabel: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  rangeLabelText: { color: COLORS.text, fontSize: 14, fontWeight: '600' },
+  rangeUnit: { color: COLORS.textDim, fontSize: 11 },
+  helpBtn: { marginLeft: 2 },
+  helpBtnText: { color: COLORS.primary, fontSize: 14 },
+  rangeInputs: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  rangeInput: {
+    flex: 1,
+    backgroundColor: COLORS.card,
+    borderRadius: 8,
+    color: COLORS.text,
+    fontSize: 13,
+    paddingVertical: 6, paddingHorizontal: 10,
+    borderWidth: 1, borderColor: COLORS.border,
+    textAlign: 'center',
+  },
+  rangeSep: { color: COLORS.textMuted, fontSize: 14 },
+  resetBtn: {
+    backgroundColor: COLORS.card,
+    borderRadius: 6,
+    paddingVertical: 6, paddingHorizontal: 8,
+    borderWidth: 1, borderColor: COLORS.border,
+  },
+  resetBtnText: { color: COLORS.textDim, fontSize: 11 },
+
   downloadBtn: {
     backgroundColor: COLORS.primaryDark,
-    borderRadius: 10,
-    margin: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
+    borderRadius: 10, margin: 12, paddingVertical: 12, alignItems: 'center',
   },
   downloadBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+
   saveBtn: {
     backgroundColor: COLORS.primary,
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginBottom: 12,
+    borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginBottom: 12,
   },
   saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+
   dangerBtn: {
     backgroundColor: COLORS.error + '22',
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginBottom: 20,
+    borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginBottom: 20,
     borderWidth: 1, borderColor: COLORS.error + '66',
   },
   dangerBtnText: { color: COLORS.error, fontWeight: '600', fontSize: 14 },
+
   version: { color: COLORS.textDim, textAlign: 'center', fontSize: 11 },
+
+  // 모달
+  modalOverlay: {
+    flex: 1, backgroundColor: '#000000AA',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  modalBox: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 16, padding: 24, width: '80%',
+    borderWidth: 1, borderColor: COLORS.border,
+  },
+  modalTitle: { color: COLORS.text, fontSize: 16, fontWeight: '700', marginBottom: 10 },
+  modalBody: { color: COLORS.textMuted, fontSize: 14, lineHeight: 20 },
+  modalClose: {
+    marginTop: 16, alignSelf: 'flex-end',
+    backgroundColor: COLORS.primary, borderRadius: 8,
+    paddingVertical: 8, paddingHorizontal: 20,
+  },
+  modalCloseText: { color: '#fff', fontWeight: '600', fontSize: 14 },
 });

@@ -1,85 +1,82 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  TextInput, Modal, FlatList, Alert,
+  View, Text, StyleSheet, TouchableOpacity,
+  ScrollView, TextInput, Modal, Alert, Platform,
 } from 'react-native';
 import { useSurveyStore } from '../stores/SurveyStore';
-import { COLORS, SURVEY_FIELDS_GROWTH, SURVEY_FIELDS_QUALITY, FIELD_UNITS } from '../utils/constants';
+import { COLORS, SURVEY_FIELDS_GROWTH, SURVEY_FIELDS_QUALITY } from '../utils/constants';
 import {
   startRecognition, stopRecognition, requestPermissions,
-  useSpeechRecognitionEvent, parseRecognitionResult,
-  startClipRecording, stopClipRecording,
+  useSpeechRecognitionEvent,
 } from '../services/VoiceService';
 import {
   upsertSample, upsertMeasurement, getMeasurementsMap,
-  getSample, updateSampleMemo,
+  getSample, updateSampleMemo, getMeasurements,
 } from '../services/DatabaseService';
 import { getPreviousValues, computeDiff } from '../services/HistoryService';
 import { speak } from '../services/TTSService';
 import { getUnsyncedCount } from '../services/SyncService';
+import { parseBestAlternative, ParsedToken } from '../services/ParserService';
+import { checkRequired, checkRange } from '../services/ValidationService';
+import { pushUndo, popUndo } from '../services/UndoService';
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 
-// ─── 비교 테이블 ──────────────────────────────────────────────────────────────
-
-interface CompareTableProps {
+// ─── 비교 테이블 (가로 스크롤만) ─────────────────────────────────────────────
+function CompareTable({
+  fields, currentValues, previousValues, previousDate, outOfRangeFields,
+}: {
   fields: string[];
   currentValues: Record<string, number>;
   previousValues: Record<string, number> | null;
   previousDate: string | null;
-}
-
-function CompareTable({ fields, currentValues, previousValues, previousDate }: CompareTableProps) {
-  const measureFields = fields.filter(f => f !== '비고');
-  if (measureFields.length === 0) return null;
-
+  outOfRangeFields: Set<string>;
+}) {
+  const mFields = fields.filter(f => f !== '비고');
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tableContainer}>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
       <View>
-        {/* 헤더 */}
         <View style={styles.tableRow}>
-          <Text style={[styles.tableCell, styles.tableHeader, styles.tableLabelCell]}>구분</Text>
-          {measureFields.map(f => (
-            <Text key={f} style={[styles.tableCell, styles.tableHeader]}>{f}</Text>
+          <Text style={[styles.cell, styles.labelCell, styles.headerCell]}>구분</Text>
+          {mFields.map(f => (
+            <Text key={f} style={[styles.cell, styles.headerCell]}>{f}</Text>
           ))}
         </View>
-        {/* 이전값 */}
         {previousValues && (
           <View style={styles.tableRow}>
-            <Text style={[styles.tableCell, styles.tableLabelCell, { color: COLORS.textMuted }]}>
-              {previousDate ? previousDate.slice(5) : '이전'}
+            <Text style={[styles.cell, styles.labelCell, { color: COLORS.textDim }]}>
+              {previousDate?.slice(5) ?? '이전'}
             </Text>
-            {measureFields.map(f => (
-              <Text key={f} style={[styles.tableCell, { color: COLORS.textMuted }]}>
-                {previousValues[f] !== undefined ? previousValues[f] : '-'}
+            {mFields.map(f => (
+              <Text key={f} style={[styles.cell, { color: COLORS.textDim }]}>
+                {previousValues[f] ?? '-'}
               </Text>
             ))}
           </View>
         )}
-        {/* 현재값 */}
         <View style={styles.tableRow}>
-          <Text style={[styles.tableCell, styles.tableLabelCell, { color: COLORS.primary }]}>오늘</Text>
-          {measureFields.map(f => {
+          <Text style={[styles.cell, styles.labelCell, { color: COLORS.primary }]}>오늘</Text>
+          {mFields.map(f => {
             const cv = currentValues[f];
             const pv = previousValues?.[f];
-            let color = COLORS.text;
+            const outOfRange = outOfRangeFields.has(f);
+            let color = outOfRange ? COLORS.red : COLORS.text;
             let diffText = '';
             if (cv !== undefined && pv !== undefined) {
               const d = computeDiff(cv, pv);
-              if (d.level === 'red') color = COLORS.red;
-              else if (d.level === 'yellow') color = COLORS.yellow;
+              if (!outOfRange) {
+                if (d.level === 'red') color = COLORS.red;
+                else if (d.level === 'yellow') color = COLORS.yellow;
+              }
               const sign = cv > pv ? '+' : '';
-              const pct = (d.diffPct * 100).toFixed(1);
-              diffText = `${sign}${pct}%`;
+              diffText = `${sign}${(d.diffPct * 100).toFixed(1)}%`;
             }
             return (
-              <View key={f} style={styles.tableCellWrapper}>
-                <Text style={[styles.tableCell, { color: cv !== undefined ? color : COLORS.textDim }]}>
+              <View key={f} style={styles.cellWrapper}>
+                <Text style={[styles.cell, { color: cv !== undefined ? color : COLORS.textDim }]}>
                   {cv !== undefined ? cv : '-'}
                 </Text>
-                {diffText ? (
-                  <Text style={{ fontSize: 9, color, textAlign: 'center' }}>{diffText}</Text>
-                ) : null}
+                {diffText ? <Text style={{ fontSize: 9, color, textAlign: 'center' }}>{diffText}</Text> : null}
               </View>
             );
           })}
@@ -90,32 +87,21 @@ function CompareTable({ fields, currentValues, previousValues, previousDate }: C
 }
 
 // ─── 수동 입력 모달 ───────────────────────────────────────────────────────────
+function ManualInputModal({
+  visible, fields, onSubmit, onClose,
+}: { visible: boolean; fields: string[]; onSubmit: (f: string, v: number | string) => void; onClose: () => void }) {
+  const [sel, setSel] = useState(fields[0] || '');
+  const [val, setVal] = useState('');
 
-interface ManualInputModalProps {
-  visible: boolean;
-  fields: string[];
-  onSubmit: (field: string, value: number | string) => void;
-  onClose: () => void;
-}
+  useEffect(() => { if (visible) { setSel(fields[0] || ''); setVal(''); } }, [visible, fields]);
 
-function ManualInputModal({ visible, fields, onSubmit, onClose }: ManualInputModalProps) {
-  const [selectedField, setSelectedField] = useState(fields[0] || '');
-  const [value, setValue] = useState('');
-
-  useEffect(() => {
-    if (visible) { setSelectedField(fields[0] || ''); setValue(''); }
-  }, [visible, fields]);
-
-  function handleSubmit() {
-    if (!selectedField || !value.trim()) return;
-    if (selectedField === '비고') {
-      onSubmit(selectedField, value.trim());
-    } else {
-      const num = parseFloat(value);
-      if (isNaN(num)) { Alert.alert('오류', '숫자를 입력하세요.'); return; }
-      onSubmit(selectedField, num);
-    }
-    setValue('');
+  function submit() {
+    if (!sel || !val.trim()) return;
+    if (sel === '비고') { onSubmit(sel, val.trim()); return; }
+    const n = parseFloat(val);
+    if (isNaN(n)) { Alert.alert('오류', '숫자를 입력하세요.'); return; }
+    onSubmit(sel, n);
+    setVal('');
   }
 
   return (
@@ -123,37 +109,33 @@ function ManualInputModal({ visible, fields, onSubmit, onClose }: ManualInputMod
       <View style={styles.modalOverlay}>
         <View style={styles.modalCard}>
           <Text style={styles.modalTitle}>수동 입력</Text>
-          <Text style={styles.label}>항목 선택</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
             {fields.map(f => (
               <TouchableOpacity
                 key={f}
-                style={[styles.fieldChip, selectedField === f && styles.fieldChipSelected]}
-                onPress={() => setSelectedField(f)}
+                style={[styles.chip, sel === f && styles.chipSelected]}
+                onPress={() => setSel(f)}
               >
-                <Text style={{ color: selectedField === f ? '#fff' : COLORS.textMuted, fontSize: 13 }}>{f}</Text>
+                <Text style={{ color: sel === f ? '#fff' : COLORS.textMuted, fontSize: 13 }}>{f}</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
-          <Text style={styles.label}>
-            값 {FIELD_UNITS[selectedField] ? `(${FIELD_UNITS[selectedField]})` : ''}
-          </Text>
           <TextInput
             style={styles.textInput}
-            value={value}
-            onChangeText={setValue}
-            keyboardType={selectedField === '비고' ? 'default' : 'decimal-pad'}
-            placeholder={selectedField === '비고' ? '메모 입력' : '숫자 입력'}
+            value={val}
+            onChangeText={setVal}
+            keyboardType={sel === '비고' ? 'default' : 'decimal-pad'}
+            placeholder={sel === '비고' ? '메모 입력' : '숫자 입력'}
             placeholderTextColor={COLORS.textDim}
             returnKeyType="done"
-            onSubmitEditing={handleSubmit}
+            onSubmitEditing={submit}
             autoFocus
           />
-          <View style={styles.modalButtons}>
+          <View style={styles.modalBtns}>
             <TouchableOpacity style={styles.btnCancel} onPress={onClose}>
               <Text style={{ color: COLORS.textMuted }}>취소</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.btnConfirm} onPress={handleSubmit}>
+            <TouchableOpacity style={styles.btnConfirm} onPress={submit}>
               <Text style={{ color: '#fff', fontWeight: 'bold' }}>확인</Text>
             </TouchableOpacity>
           </View>
@@ -164,7 +146,6 @@ function ManualInputModal({ visible, fields, onSubmit, onClose }: ManualInputMod
 }
 
 // ─── 메인 화면 ────────────────────────────────────────────────────────────────
-
 export default function SurveyScreen() {
   const {
     session, setSession,
@@ -176,21 +157,22 @@ export default function SurveyScreen() {
     setUnsyncedCount,
   } = useSurveyStore();
 
-  const [previousValues, setPreviousValues] = useState<Record<string, number> | null>(null);
-  const [previousDate, setPreviousDate] = useState<string | null>(null);
-  const [showManualInput, setShowManualInput] = useState(false);
-  const [permissionsGranted, setPermissionsGranted] = useState(false);
-  const clipPathRef = useRef<string | null>(null);
+  const [prevValues, setPrevValues] = useState<Record<string, number> | null>(null);
+  const [prevDate, setPrevDate] = useState<string | null>(null);
+  const [showManual, setShowManual] = useState(false);
+  const [outOfRangeFields, setOutOfRangeFields] = useState<Set<string>>(new Set());
+  const [lastVoiceText, setLastVoiceText] = useState('');
 
   const fields = session.surveyType === '비대조사'
     ? [...SURVEY_FIELDS_GROWTH]
-    : [...SURVEY_FIELDS_QUALITY];
+    : session.surveyType === '품질조사'
+    ? [...SURVEY_FIELDS_QUALITY]
+    : [...SURVEY_FIELDS_QUALITY]; // 추가조사도 품질 필드 기준
 
   // 현재 샘플 로드
-  const loadCurrentSample = useCallback(async () => {
-    const existing = await getSample(
-      session.surveyDate, session.farmName, session.treeNo, session.fruitNo
-    );
+  const loadSample = useCallback(async () => {
+    if (!session.farmName) return;
+    const existing = await getSample(session.surveyDate, session.farmName, session.treeNo, session.fruitNo);
     if (existing) {
       setCurrentSampleId(existing.sample_id);
       const m = await getMeasurementsMap(existing.sample_id);
@@ -199,39 +181,24 @@ export default function SurveyScreen() {
       setCurrentSampleId(null);
       setCurrentMeasurements({});
     }
-
-    // 이전값 조회
     if (session.farmName) {
       const prev = await getPreviousValues(
         session.farmName, session.label, session.treatment,
         session.treeNo, session.fruitNo, session.surveyDate
       );
-      if (prev) {
-        setPreviousValues(prev.measurements);
-        setPreviousDate(prev.surveyDate);
-      } else {
-        setPreviousValues(null);
-        setPreviousDate(null);
-      }
+      setPrevValues(prev?.measurements ?? null);
+      setPrevDate(prev?.surveyDate ?? null);
     }
-  }, [session.surveyDate, session.farmName, session.treeNo, session.fruitNo, session.label, session.treatment, setCurrentSampleId, setCurrentMeasurements]);
+  }, [session.surveyDate, session.farmName, session.treeNo, session.fruitNo,
+      session.label, session.treatment, setCurrentSampleId, setCurrentMeasurements]);
 
-  useEffect(() => { loadCurrentSample(); }, [loadCurrentSample]);
+  useEffect(() => { loadSample(); }, [loadSample]);
 
-  // 권한 확인
-  useEffect(() => {
-    requestPermissions().then(setPermissionsGranted);
-  }, []);
-
-  // 샘플 upsert & 측정값 저장
+  // 샘플 upsert + 측정값 저장
   async function saveMeasurement(
-    field: string,
-    value: number | string,
-    inputMethod: 'voice' | 'manual',
-    rawVoiceText: string = '',
-    audioClipPath: string = ''
+    field: string, value: number | string,
+    inputMethod: 'voice' | 'manual', rawText = ''
   ) {
-    // 샘플 생성 또는 확인
     let sampleId = currentSampleId;
     if (!sampleId) {
       sampleId = uuidv4();
@@ -253,221 +220,249 @@ export default function SurveyScreen() {
       });
       setCurrentSampleId(sampleId);
     }
-
     if (field === '비고') {
       await updateSampleMemo(sampleId, String(value));
-      updateMeasurement('비고', value as number);
+      updateMeasurement('비고', 0); // 비고는 숫자 없이 표시용
     } else {
       const num = typeof value === 'number' ? value : parseFloat(String(value));
+      // undo 스택에 이전값 저장
+      const prev = currentMeasurements[field];
+      await pushUndo({
+        sampleId, itemName: field,
+        previousValue: prev ?? null,
+        actionType: prev !== undefined ? 'set' : 'set',
+      });
       await upsertMeasurement({
         measurement_id: uuidv4(),
         sample_id: sampleId,
         item_name: field,
         item_value: num,
         input_method: inputMethod,
-        raw_voice_text: rawVoiceText,
-        audio_clip_path: audioClipPath,
+        raw_voice_text: rawText,
+        audio_clip_path: '',
         updated_at: new Date().toISOString(),
       });
       updateMeasurement(field, num);
+      // 범위 체크
+      const rangeResult = await checkRange(field, num);
+      setOutOfRangeFields(prev => {
+        const next = new Set(prev);
+        if (!rangeResult.inRange) next.add(field);
+        else next.delete(field);
+        return next;
+      });
     }
-
     const count = await getUnsyncedCount();
     setUnsyncedCount(count);
+  }
+
+  // 취소 실행
+  async function executeUndo() {
+    const entry = await popUndo();
+    if (!entry) { speak('취소할 항목 없음'); return; }
+    if (entry.previousValue === null) {
+      // 이전값이 없었으면 해당 측정값 삭제
+      const db = (await import('../services/DatabaseService')).getDB;
+      // 단순히 UI에서 제거
+      const newM = { ...currentMeasurements };
+      delete newM[entry.itemName];
+      setCurrentMeasurements(newM);
+    } else {
+      await upsertMeasurement({
+        measurement_id: uuidv4(),
+        sample_id: entry.sampleId,
+        item_name: entry.itemName,
+        item_value: entry.previousValue,
+        input_method: 'manual',
+        raw_voice_text: '',
+        audio_clip_path: '',
+        updated_at: new Date().toISOString(),
+      });
+      updateMeasurement(entry.itemName, entry.previousValue);
+    }
+    speak('취소');
+  }
+
+  // 스트림 파싱 처리
+  async function processTokens(tokens: ParsedToken[]) {
+    for (const token of tokens) {
+      if (token.type === 'correction') {
+        setCorrectionMode(true);
+        speak('수정');
+        addVoiceLog({ id: uuidv4(), timestamp: ts(), rawText: token.raw, parsedType: 'correction', success: true });
+      } else if (token.type === 'cancel') {
+        await executeUndo();
+        addVoiceLog({ id: uuidv4(), timestamp: ts(), rawText: token.raw, parsedType: 'cancel', success: true });
+      } else if (token.type === 'context') {
+        const updates: Record<string, unknown> = {};
+        const k = token.key;
+        if (k === 'treeNo') updates.treeNo = token.value as number;
+        else if (k === 'fruitNo') updates.fruitNo = token.value as number;
+        else if (k === 'farmName') updates.farmName = token.value as string;
+        else if (k === 'label') updates.label = token.value as string;
+        else if (k === 'treatment') updates.treatment = token.value as string;
+        setSession(updates as Parameters<typeof setSession>[0]);
+        speak(token.raw);
+        addVoiceLog({ id: uuidv4(), timestamp: ts(), rawText: token.raw, parsedType: 'context', parsedField: token.key, success: true });
+        setCorrectionMode(false);
+      } else if (token.type === 'memo') {
+        await saveMeasurement('비고', token.text, 'voice', token.raw);
+        speak(token.raw);
+        addVoiceLog({ id: uuidv4(), timestamp: ts(), rawText: token.raw, parsedType: 'memo', success: true });
+        setCorrectionMode(false);
+      } else if (token.type === 'measurement') {
+        const rangeResult = await checkRange(token.field, token.value);
+        const ttsText = rangeResult.inRange
+          ? `${token.field} ${token.value}`
+          : `${token.field} ${token.value} 확인`;
+        await saveMeasurement(token.field, token.value, 'voice', token.raw);
+        speak(ttsText);
+        addVoiceLog({
+          id: uuidv4(), timestamp: ts(), rawText: token.raw,
+          parsedType: 'measurement', parsedField: token.field,
+          parsedValue: token.value, success: true,
+          outOfRange: !rangeResult.inRange,
+        });
+        setCorrectionMode(false);
+      }
+    }
   }
 
   // 음성인식 이벤트
   useSpeechRecognitionEvent('result', async (event) => {
     if (!event.isFinal) return;
 
-    // 녹음 중지
-    const clipPath = await stopClipRecording();
-    clipPathRef.current = clipPath;
+    const alternatives = event.results
+      ? event.results.map((r: { transcript: string }) => r.transcript)
+      : [];
+    if (alternatives.length === 0) return;
 
-    const cmd = parseRecognitionResult(event);
+    setLastVoiceText(alternatives[0]);
 
-    const logEntry = {
-      id: uuidv4(),
-      timestamp: new Date().toLocaleTimeString('ko-KR'),
-      rawText: cmd.rawText,
-      parsedType: cmd.type,
-      parsedField: cmd.field,
-      parsedValue: cmd.value,
-      success: cmd.type !== 'unknown',
-    };
-    addVoiceLog(logEntry);
+    const { getConfig } = await import('../services/DatabaseService');
+    const customTermsJson = await getConfig('customTerms');
+    const customTerms: string[] = customTermsJson ? JSON.parse(customTermsJson) : [];
+    const extraAliases: Record<string, string> = {};
+    customTerms.forEach(t => { extraAliases[t.toLowerCase()] = t; });
 
-    if (cmd.type === 'correction') {
-      setCorrectionMode(true);
-      speak('수정 모드');
-      return;
-    }
-
-    if (cmd.type === 'context' && cmd.contextKey && cmd.contextValue !== undefined) {
-      const updates: Record<string, unknown> = {};
-      if (cmd.contextKey === 'treeNo') updates.treeNo = cmd.contextValue as number;
-      else if (cmd.contextKey === 'fruitNo') updates.fruitNo = cmd.contextValue as number;
-      else if (cmd.contextKey === 'farmName') updates.farmName = cmd.contextValue as string;
-      else if (cmd.contextKey === 'label') updates.label = cmd.contextValue as string;
-      else if (cmd.contextKey === 'treatment') updates.treatment = cmd.contextValue as string;
-      setSession(updates as Parameters<typeof setSession>[0]);
-      speak(`${cmd.contextKey === 'farmName' ? '농가' : cmd.contextKey} ${cmd.contextValue}`);
-      setCorrectionMode(false);
-      return;
-    }
-
-    if (cmd.type === 'memo' && cmd.field) {
-      await saveMeasurement('비고', cmd.field, 'voice', cmd.rawText, clipPath || '');
-      speak('비고 저장');
-      setCorrectionMode(false);
-      return;
-    }
-
-    if (cmd.type === 'measurement' && cmd.field !== undefined && cmd.value !== undefined) {
-      // 수정 모드가 아니고 이미 값이 있으면 경고 없이 overwrite (수정 모드 해제)
-      await saveMeasurement(cmd.field, cmd.value, 'voice', cmd.rawText, clipPath || '');
-      speak(`${cmd.field} ${cmd.value}`);
-      setCorrectionMode(false);
-      return;
-    }
-
-    // 다음 발화를 위한 녹음 재시작
-    if (isListening) {
-      await startClipRecording();
-    }
+    const tokens = parseBestAlternative(alternatives, extraAliases);
+    await processTokens(tokens);
   });
 
-  useSpeechRecognitionEvent('start', async () => {
-    setIsListening(true);
-    await startClipRecording();
-  });
-
-  useSpeechRecognitionEvent('end', () => {
-    setIsListening(false);
-  });
-
-  useSpeechRecognitionEvent('error', (event) => {
-    console.warn('Speech error:', event);
-    setIsListening(false);
-  });
+  useSpeechRecognitionEvent('start', () => setIsListening(true));
+  useSpeechRecognitionEvent('end', () => setIsListening(false));
+  useSpeechRecognitionEvent('error', () => setIsListening(false));
 
   // 마이크 버튼
   async function handleMicPress() {
-    if (!permissionsGranted) {
-      const ok = await requestPermissions();
-      setPermissionsGranted(ok);
-      if (!ok) { Alert.alert('권한 필요', '마이크 및 음성인식 권한이 필요합니다.'); return; }
-    }
     if (isListening) {
       stopRecognition();
-    } else {
-      startRecognition();
+      speak('음성입력 종료');
+      return;
     }
+
+    // 권한 확인
+    const ok = await requestPermissions();
+    if (!ok) { Alert.alert('권한 필요', '마이크 및 음성인식 권한이 필요합니다.'); return; }
+
+    // 필수값 체크
+    const check = checkRequired({
+      observer: session.observer,
+      farmName: session.farmName,
+      label: session.label,
+      treatment: session.treatment,
+      surveyType: session.surveyType,
+      webAppUrl: '', // URL은 경고만 (차단 옵션)
+    });
+    if (!check.ok) {
+      speak(check.message);
+      Alert.alert('설정 필요', check.message);
+      return;
+    }
+
+    speak('음성입력 시작');
+    startRecognition();
   }
 
-  function adjustTreeNo(delta: number) {
-    const next = Math.max(1, session.treeNo + delta);
-    setSession({ treeNo: next });
-  }
-
-  function adjustFruitNo(delta: number) {
-    const next = Math.max(1, session.fruitNo + delta);
-    setSession({ fruitNo: next });
-  }
-
-  async function handleManualSubmit(field: string, value: number | string) {
-    await saveMeasurement(field, value, 'manual');
-    setShowManualInput(false);
-  }
+  function ts() { return new Date().toLocaleTimeString('ko-KR'); }
 
   return (
     <View style={styles.container}>
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scrollContent}>
-        {/* 컨텍스트 헤더 */}
-        <View style={styles.contextCard}>
-          <View style={styles.contextRow}>
-            <ContextBadge label="농가" value={session.farmName || '미설정'} />
-            <ContextBadge label="라벨" value={session.label} />
-            <ContextBadge label="처리" value={session.treatment} />
-            <ContextBadge label="유형" value={session.surveyType} />
-          </View>
-          <Text style={styles.dateText}>{session.surveyDate}</Text>
-        </View>
+      {/* ① 컨텍스트 헤더 */}
+      <View style={styles.contextBar}>
+        <CtxBadge label="농가" value={session.farmName || '미설정'} alert={!session.farmName} />
+        <CtxBadge label="라벨" value={session.label || '-'} />
+        <CtxBadge label="처리" value={session.treatment || '-'} />
+        <CtxBadge label="유형" value={session.surveyType} />
+        <CtxBadge label="조사자" value={session.observer || '미설정'} alert={!session.observer} />
+      </View>
 
-        {/* 나무/과실 선택 */}
-        <View style={styles.sampleSelector}>
-          <StepperControl
-            label="조사나무"
-            value={session.treeNo}
-            onDecrement={() => adjustTreeNo(-1)}
-            onIncrement={() => adjustTreeNo(1)}
-          />
-          <StepperControl
-            label="조사과실"
-            value={session.fruitNo}
-            onDecrement={() => adjustFruitNo(-1)}
-            onIncrement={() => adjustFruitNo(1)}
-          />
-        </View>
+      {/* ② 나무/과실 선택 */}
+      <View style={styles.sampleRow}>
+        <Stepper label="나무" value={session.treeNo}
+          onDec={() => setSession({ treeNo: Math.max(1, session.treeNo - 1) })}
+          onInc={() => setSession({ treeNo: session.treeNo + 1 })} />
+        <Stepper label="과실" value={session.fruitNo}
+          onDec={() => setSession({ fruitNo: Math.max(1, session.fruitNo - 1) })}
+          onInc={() => setSession({ fruitNo: session.fruitNo + 1 })} />
+      </View>
 
-        {/* 비교 테이블 */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>측정값 비교</Text>
-          <CompareTable
-            fields={fields}
-            currentValues={currentMeasurements}
-            previousValues={previousValues}
-            previousDate={previousDate}
-          />
-        </View>
+      {/* ③ 비교 테이블 */}
+      <View style={styles.tableSection}>
+        <CompareTable
+          fields={fields}
+          currentValues={currentMeasurements}
+          previousValues={prevValues}
+          previousDate={prevDate}
+          outOfRangeFields={outOfRangeFields}
+        />
+      </View>
 
-        {/* 음성 로그 */}
-        {voiceLogs.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>음성 로그</Text>
-            {voiceLogs.slice(0, 6).map(log => (
+      {/* ④ 음성 로그 (고정 높이) */}
+      <View style={styles.logSection}>
+        <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+          {voiceLogs.length === 0 ? (
+            <Text style={styles.logEmpty}>음성 입력 대기 중…</Text>
+          ) : (
+            voiceLogs.slice(0, 8).map(log => (
               <View key={log.id} style={styles.logRow}>
                 <Text style={styles.logTime}>{log.timestamp}</Text>
                 <View style={{ flex: 1 }}>
-                  {/* 파싱 결과를 크게, 원문은 작게 */}
-                  {log.parsedField && log.parsedValue !== undefined ? (
-                    <Text style={styles.logParsed}>
+                  {log.parsedType === 'measurement' && log.parsedField !== undefined ? (
+                    <Text style={[styles.logMain, log.outOfRange && { color: COLORS.red }]}>
                       {log.parsedField}: {log.parsedValue}
+                      {log.outOfRange ? ' ⚠️' : ''}
                     </Text>
                   ) : log.parsedType === 'correction' ? (
-                    <Text style={[styles.logParsed, { color: COLORS.accent }]}>✏️ 수정 모드</Text>
+                    <Text style={[styles.logMain, { color: COLORS.accent }]}>✏️ 수정 모드</Text>
+                  ) : log.parsedType === 'cancel' ? (
+                    <Text style={[styles.logMain, { color: COLORS.warning }]}>↩ 취소</Text>
                   ) : log.parsedType === 'context' ? (
-                    <Text style={[styles.logParsed, { color: COLORS.success }]}>
-                      컨텍스트 변경
-                    </Text>
+                    <Text style={[styles.logMain, { color: COLORS.success }]}>{log.rawText}</Text>
                   ) : (
-                    <Text style={{ color: COLORS.textDim, fontSize: 11 }}>인식 실패</Text>
+                    <Text style={{ color: COLORS.textDim, fontSize: 11 }}>
+                      {log.rawText.slice(0, 40)}{log.rawText.length > 40 ? '…' : ''}
+                    </Text>
                   )}
-                  <Text style={styles.logRaw} numberOfLines={1} ellipsizeMode="tail">
-                    {log.rawText.length > 30 ? log.rawText.slice(0, 30) + '…' : log.rawText}
-                  </Text>
                 </View>
               </View>
-            ))}
-          </View>
-        )}
-      </ScrollView>
+            ))
+          )}
+        </ScrollView>
+      </View>
 
-      {/* 하단 컨트롤 */}
+      {/* ⑤ 하단 고정 바 */}
       <View style={styles.bottomBar}>
         {correctionMode && (
-          <View style={styles.correctionBadge}>
-            <Text style={styles.correctionText}>✏️ 수정 모드</Text>
+          <View style={styles.corrBadge}>
+            <Text style={styles.corrText}>✏️ 수정</Text>
           </View>
         )}
-        <TouchableOpacity
-          style={styles.manualBtn}
-          onPress={() => setShowManualInput(true)}
-        >
+        <TouchableOpacity style={styles.manualBtn} onPress={() => setShowManual(true)}>
           <Text style={styles.manualBtnText}>수동 입력</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.micButton, isListening && styles.micButtonActive]}
+          style={[styles.micBtn, isListening && styles.micBtnActive]}
           onPress={handleMicPress}
         >
           <Text style={styles.micIcon}>{isListening ? '⏹' : '🎙'}</Text>
@@ -476,38 +471,35 @@ export default function SurveyScreen() {
       </View>
 
       <ManualInputModal
-        visible={showManualInput}
+        visible={showManual}
         fields={fields}
-        onSubmit={handleManualSubmit}
-        onClose={() => setShowManualInput(false)}
+        onSubmit={async (f, v) => { await saveMeasurement(f, v, 'manual'); setShowManual(false); }}
+        onClose={() => setShowManual(false)}
       />
     </View>
   );
 }
 
 // ─── 서브 컴포넌트 ─────────────────────────────────────────────────────────────
-
-function ContextBadge({ label, value }: { label: string; value: string }) {
+function CtxBadge({ label, value, alert }: { label: string; value: string; alert?: boolean }) {
   return (
-    <View style={styles.contextBadge}>
-      <Text style={styles.contextBadgeLabel}>{label}</Text>
-      <Text style={styles.contextBadgeValue}>{value}</Text>
+    <View style={[styles.ctxBadge, alert && styles.ctxBadgeAlert]}>
+      <Text style={styles.ctxLabel}>{label}</Text>
+      <Text style={[styles.ctxValue, alert && { color: COLORS.warning }]}>{value}</Text>
     </View>
   );
 }
 
-function StepperControl({
-  label, value, onDecrement, onIncrement,
-}: { label: string; value: number; onDecrement: () => void; onIncrement: () => void }) {
+function Stepper({ label, value, onDec, onInc }: { label: string; value: number; onDec: () => void; onInc: () => void }) {
   return (
     <View style={styles.stepper}>
-      <Text style={styles.stepperLabel}>{label}</Text>
-      <View style={styles.stepperRow}>
-        <TouchableOpacity style={styles.stepBtn} onPress={onDecrement}>
+      <Text style={styles.stepLabel}>{label}</Text>
+      <View style={styles.stepRow}>
+        <TouchableOpacity style={styles.stepBtn} onPress={onDec}>
           <Text style={styles.stepBtnText}>−</Text>
         </TouchableOpacity>
-        <Text style={styles.stepValue}>{value}</Text>
-        <TouchableOpacity style={styles.stepBtn} onPress={onIncrement}>
+        <Text style={styles.stepVal}>{value}</Text>
+        <TouchableOpacity style={styles.stepBtn} onPress={onInc}>
           <Text style={styles.stepBtnText}>+</Text>
         </TouchableOpacity>
       </View>
@@ -516,157 +508,123 @@ function StepperControl({
 }
 
 // ─── 스타일 ───────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
-  scrollContent: { padding: 12, paddingBottom: 160 },
-  contextCard: {
+
+  // ① 컨텍스트 바
+  contextBar: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 6,
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    paddingHorizontal: 12, paddingVertical: 8,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
   },
-  contextRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  contextBadge: {
-    backgroundColor: COLORS.card,
-    borderRadius: 8,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    alignItems: 'center',
+  ctxBadge: {
+    backgroundColor: COLORS.card, borderRadius: 8,
+    paddingVertical: 3, paddingHorizontal: 8, alignItems: 'center',
   },
-  contextBadgeLabel: { fontSize: 10, color: COLORS.textDim, marginBottom: 2 },
-  contextBadgeValue: { fontSize: 13, color: COLORS.text, fontWeight: '600' },
-  dateText: { color: COLORS.textMuted, fontSize: 12, marginTop: 8 },
-  sampleSelector: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
+  ctxBadgeAlert: { borderWidth: 1, borderColor: COLORS.warning + '80' },
+  ctxLabel: { fontSize: 9, color: COLORS.textDim },
+  ctxValue: { fontSize: 12, color: COLORS.text, fontWeight: '600' },
+
+  // ② 나무/과실
+  sampleRow: {
+    flexDirection: 'row', gap: 8, padding: 8,
+    backgroundColor: COLORS.surface,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
   },
   stepper: {
-    flex: 1,
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    padding: 12,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    flex: 1, backgroundColor: COLORS.card, borderRadius: 10,
+    paddingVertical: 6, alignItems: 'center',
+    borderWidth: 1, borderColor: COLORS.border,
   },
-  stepperLabel: { color: COLORS.textMuted, fontSize: 12, marginBottom: 8 },
-  stepperRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  stepLabel: { fontSize: 10, color: COLORS.textMuted, marginBottom: 4 },
+  stepRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   stepBtn: {
-    backgroundColor: COLORS.card,
-    width: 36, height: 36,
-    borderRadius: 18,
-    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: COLORS.surface, width: 30, height: 30,
+    borderRadius: 15, alignItems: 'center', justifyContent: 'center',
   },
-  stepBtnText: { color: COLORS.primary, fontSize: 20, fontWeight: 'bold' },
-  stepValue: { color: COLORS.text, fontSize: 24, fontWeight: 'bold', minWidth: 32, textAlign: 'center' },
-  section: {
+  stepBtnText: { color: COLORS.primary, fontSize: 18, fontWeight: 'bold' },
+  stepVal: { color: COLORS.text, fontSize: 20, fontWeight: 'bold', minWidth: 28, textAlign: 'center' },
+
+  // ③ 비교 테이블
+  tableSection: {
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    paddingHorizontal: 8, paddingVertical: 6,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
   },
-  sectionTitle: { color: COLORS.textMuted, fontSize: 12, marginBottom: 8, fontWeight: '600' },
-  tableContainer: { marginHorizontal: -4 },
   tableRow: { flexDirection: 'row' },
-  tableCell: {
-    minWidth: 56, paddingHorizontal: 4, paddingVertical: 6,
-    fontSize: 12, textAlign: 'center', color: COLORS.text,
+  cell: { minWidth: 54, paddingHorizontal: 3, paddingVertical: 5, fontSize: 12, textAlign: 'center', color: COLORS.text },
+  labelCell: { minWidth: 40, fontSize: 11 },
+  headerCell: { color: COLORS.textMuted, fontWeight: '600', borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  cellWrapper: { minWidth: 54, alignItems: 'center' },
+
+  // ④ 음성 로그
+  logSection: {
+    flex: 1, backgroundColor: COLORS.surface,
+    padding: 10, borderBottomWidth: 1, borderBottomColor: COLORS.border,
+    minHeight: 80,
   },
-  tableCellWrapper: { minWidth: 56, alignItems: 'center' },
-  tableHeader: { color: COLORS.textMuted, fontWeight: '600', borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  tableLabelCell: { minWidth: 48, fontSize: 11 },
-  logRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: COLORS.border,
-  },
-  logTime: { color: COLORS.textDim, fontSize: 10, minWidth: 52 },
-  logText: { color: COLORS.text, fontSize: 12, flex: 1 },
-  logParsed: { color: COLORS.primary, fontSize: 13, fontWeight: '700' },
-  logRaw: { color: COLORS.textDim, fontSize: 10, marginTop: 1 },
+  logEmpty: { color: COLORS.textDim, textAlign: 'center', marginTop: 8, fontSize: 12 },
+  logRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginBottom: 4 },
+  logTime: { color: COLORS.textDim, fontSize: 9, minWidth: 50, marginTop: 2 },
+  logMain: { color: COLORS.primary, fontSize: 13, fontWeight: '700' },
+
+  // ⑤ 하단 바
   bottomBar: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: COLORS.surface,
     borderTopWidth: 1, borderTopColor: COLORS.border,
-    padding: 16,
-    flexDirection: 'row', alignItems: 'center', gap: 12,
+    flexDirection: 'row', alignItems: 'center',
+    padding: 12, gap: 10,
+    paddingBottom: Platform.OS === 'ios' ? 20 : 12,
   },
-  correctionBadge: {
-    backgroundColor: COLORS.accent + '33',
-    borderRadius: 8,
+  corrBadge: {
+    backgroundColor: COLORS.accent + '33', borderRadius: 8,
     paddingVertical: 6, paddingHorizontal: 10,
     borderWidth: 1, borderColor: COLORS.accent,
   },
-  correctionText: { color: COLORS.accent, fontSize: 13, fontWeight: '600' },
+  corrText: { color: COLORS.accent, fontSize: 12, fontWeight: '600' },
   manualBtn: {
-    backgroundColor: COLORS.card,
-    borderRadius: 10,
-    paddingVertical: 12, paddingHorizontal: 16,
+    backgroundColor: COLORS.card, borderRadius: 10,
+    paddingVertical: 12, paddingHorizontal: 14,
     borderWidth: 1, borderColor: COLORS.border,
   },
-  manualBtnText: { color: COLORS.textMuted, fontSize: 14 },
-  micButton: {
-    flex: 1,
-    backgroundColor: COLORS.mic,
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
+  manualBtnText: { color: COLORS.textMuted, fontSize: 13 },
+  micBtn: {
+    flex: 1, backgroundColor: COLORS.mic, borderRadius: 12,
+    paddingVertical: 14, alignItems: 'center', justifyContent: 'center', gap: 2,
   },
-  micButtonActive: { backgroundColor: COLORS.micActive },
-  micIcon: { fontSize: 28 },
+  micBtnActive: { backgroundColor: COLORS.micActive },
+  micIcon: { fontSize: 24 },
   micLabel: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  // Modal
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: '#000a',
-    justifyContent: 'flex-end',
-  },
+
+  // 모달
+  modalOverlay: { flex: 1, backgroundColor: '#000a', justifyContent: 'flex-end' },
   modalCard: {
     backgroundColor: COLORS.surface,
     borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    padding: 20,
+    padding: 20, borderWidth: 1, borderColor: COLORS.border,
+    paddingBottom: 40,
+  },
+  modalTitle: { color: COLORS.text, fontSize: 17, fontWeight: '700', marginBottom: 12 },
+  chip: {
+    backgroundColor: COLORS.card, borderRadius: 8,
+    paddingVertical: 6, paddingHorizontal: 12, marginRight: 8,
     borderWidth: 1, borderColor: COLORS.border,
   },
-  modalTitle: { color: COLORS.text, fontSize: 18, fontWeight: '700', marginBottom: 16 },
-  label: { color: COLORS.textMuted, fontSize: 12, marginBottom: 8 },
-  fieldChip: {
-    backgroundColor: COLORS.card,
-    borderRadius: 8,
-    paddingVertical: 6, paddingHorizontal: 12,
-    marginRight: 8,
-    borderWidth: 1, borderColor: COLORS.border,
-  },
-  fieldChipSelected: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  chipSelected: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
   textInput: {
-    backgroundColor: COLORS.card,
-    borderRadius: 10,
-    color: COLORS.text,
-    fontSize: 18,
-    paddingVertical: 12, paddingHorizontal: 16,
-    marginBottom: 16,
-    borderWidth: 1, borderColor: COLORS.border,
+    backgroundColor: COLORS.card, borderRadius: 10, color: COLORS.text,
+    fontSize: 18, paddingVertical: 12, paddingHorizontal: 16,
+    marginVertical: 12, borderWidth: 1, borderColor: COLORS.border,
   },
-  modalButtons: { flexDirection: 'row', gap: 12 },
+  modalBtns: { flexDirection: 'row', gap: 10 },
   btnCancel: {
-    flex: 1,
-    backgroundColor: COLORS.card,
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: 'center',
+    flex: 1, backgroundColor: COLORS.card, borderRadius: 10,
+    paddingVertical: 14, alignItems: 'center',
     borderWidth: 1, borderColor: COLORS.border,
   },
   btnConfirm: {
-    flex: 2,
-    backgroundColor: COLORS.primary,
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: 'center',
+    flex: 2, backgroundColor: COLORS.primary, borderRadius: 10,
+    paddingVertical: 14, alignItems: 'center',
   },
 });
