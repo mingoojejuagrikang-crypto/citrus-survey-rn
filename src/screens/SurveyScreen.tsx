@@ -425,15 +425,28 @@ export default function SurveyScreen() {
         {voiceLogs.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>음성 로그</Text>
-            {voiceLogs.slice(0, 5).map(log => (
+            {voiceLogs.slice(0, 6).map(log => (
               <View key={log.id} style={styles.logRow}>
                 <Text style={styles.logTime}>{log.timestamp}</Text>
-                <Text style={[styles.logText, !log.success && { color: COLORS.textDim }]}>
-                  {log.rawText}
-                </Text>
-                {log.parsedField && log.parsedValue !== undefined && (
-                  <Text style={styles.logParsed}>{log.parsedField}: {log.parsedValue}</Text>
-                )}
+                <View style={{ flex: 1 }}>
+                  {/* 파싱 결과를 크게, 원문은 작게 */}
+                  {log.parsedField && log.parsedValue !== undefined ? (
+                    <Text style={styles.logParsed}>
+                      {log.parsedField}: {log.parsedValue}
+                    </Text>
+                  ) : log.parsedType === 'correction' ? (
+                    <Text style={[styles.logParsed, { color: COLORS.accent }]}>✏️ 수정 모드</Text>
+                  ) : log.parsedType === 'context' ? (
+                    <Text style={[styles.logParsed, { color: COLORS.success }]}>
+                      컨텍스트 변경
+                    </Text>
+                  ) : (
+                    <Text style={{ color: COLORS.textDim, fontSize: 11 }}>인식 실패</Text>
+                  )}
+                  <Text style={styles.logRaw} numberOfLines={1} ellipsizeMode="tail">
+                    {log.rawText.length > 30 ? log.rawText.slice(0, 30) + '…' : log.rawText}
+                  </Text>
+                </View>
               </View>
             ))}
           </View>
@@ -574,7 +587,8 @@ const styles = StyleSheet.create({
   },
   logTime: { color: COLORS.textDim, fontSize: 10, minWidth: 52 },
   logText: { color: COLORS.text, fontSize: 12, flex: 1 },
-  logParsed: { color: COLORS.primary, fontSize: 11, fontWeight: '600' },
+  logParsed: { color: COLORS.primary, fontSize: 13, fontWeight: '700' },
+  logRaw: { color: COLORS.textDim, fontSize: 10, marginTop: 1 },
   bottomBar: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: COLORS.surface,
