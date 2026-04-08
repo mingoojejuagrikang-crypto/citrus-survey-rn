@@ -11,8 +11,10 @@ import ProgressScreen from './src/screens/ProgressScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import { useSurveyStore } from './src/stores/SurveyStore';
 import { getConfig, setConfig } from './src/services/DatabaseService';
-import { startNetworkWatcher } from './src/services/SyncService';
-import { getUnsyncedCount } from './src/services/SyncService';
+import { startNetworkWatcher, getUnsyncedCount } from './src/services/SyncService';
+
+const DEFAULT_WEBAPP_URL =
+  'https://script.google.com/macros/s/AKfycbyGayON8Uykgzb8H_sozo5ngvLG-39znIWJrcyuvxKoHspx_ADScgOSoBTLzl4CtWnE/exec';
 
 const Tab = createBottomTabNavigator();
 
@@ -66,7 +68,10 @@ export default function App() {
       const surveyType = await getConfig('surveyType') as '비대조사' | '품질조사' | null;
 
       if (observer) setSession({ observer });
-      if (webUrl) setWebAppUrl(webUrl);
+      // webAppUrl: DB 저장값 우선, 없으면 기본값 자동 설정
+      const resolvedUrl = webUrl || DEFAULT_WEBAPP_URL;
+      if (!webUrl) await setConfig('webAppUrl', DEFAULT_WEBAPP_URL);
+      setWebAppUrl(resolvedUrl);
       if (farmList) setFarmList(JSON.parse(farmList));
       if (label) setSession({ label });
       if (treatment) setSession({ treatment });
