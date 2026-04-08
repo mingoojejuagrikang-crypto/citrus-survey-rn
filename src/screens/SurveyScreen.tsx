@@ -4,7 +4,7 @@ import {
   ScrollView, TextInput, Modal, Alert, Platform,
 } from 'react-native';
 import { useSurveyStore } from '../stores/SurveyStore';
-import { COLORS, SURVEY_FIELDS_GROWTH, SURVEY_FIELDS_QUALITY } from '../utils/constants';
+import { COLORS, SURVEY_FIELDS_GROWTH, SURVEY_FIELDS_QUALITY, SURVEY_TYPES, SurveyType } from '../utils/constants';
 import {
   startRecognition, stopRecognition, requestPermissions,
   useSpeechRecognitionEvent,
@@ -12,6 +12,7 @@ import {
 import {
   upsertSample, upsertMeasurement, getMeasurementsMap,
   getSample, updateSampleMemo, getMeasurements,
+  getConfig,
 } from '../services/DatabaseService';
 import { getPreviousValues, computeDiff } from '../services/HistoryService';
 import { speak } from '../services/TTSService';
@@ -145,6 +146,76 @@ function ManualInputModal({
   );
 }
 
+// ─── 세션 필드 편집 모달 ─────────────────────────────────────────────────────
+type EditTarget = 'farmName' | 'label' | 'treatment';
+
+function SessionEditModal({
+  visible, target, currentValue, farmList, onConfirm, onClose,
+}: {
+  visible: boolean;
+  target: EditTarget | null;
+  currentValue: string;
+  farmList: string[];
+  onConfirm: (val: string) => void;
+  onClose: () => void;
+}) {
+  const [val, setVal] = useState('');
+  useEffect(() => { if (visible) setVal(currentValue); }, [visible, currentValue]);
+
+  const title = target === 'farmName' ? '농가명' : target === 'label' ? '라벨' : '처리구';
+
+  function confirm() {
+    const trimmed = val.trim();
+    if (!trimmed) return;
+    onConfirm(trimmed);
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalCard}>
+          <Text style={styles.modalTitle}>{title} 입력</Text>
+
+          {/* 농가명은 저장된 목록 퀵픽 제공 */}
+          {target === 'farmName' && farmList.length > 0 && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+              {farmList.map(f => (
+                <TouchableOpacity
+                  key={f}
+                  style={[styles.chip, val === f && styles.chipSelected]}
+                  onPress={() => { setVal(f); }}
+                >
+                  <Text style={{ color: val === f ? '#fff' : COLORS.textMuted, fontSize: 13 }}>{f}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+
+          <TextInput
+            style={styles.textInput}
+            value={val}
+            onChangeText={setVal}
+            placeholder={`${title} 입력`}
+            placeholderTextColor={COLORS.textDim}
+            returnKeyType="done"
+            onSubmitEditing={confirm}
+            autoFocus
+            autoCapitalize="none"
+          />
+          <View style={styles.modalBtns}>
+            <TouchableOpacity style={styles.btnCancel} onPress={onClose}>
+              <Text style={{ color: COLORS.textMuted }}>취소</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.btnConfirm} onPress={confirm}>
+              <Text style={{ color: '#fff', fontWeight: 'bold' }}>확인</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // ─── 메인 화면 ────────────────────────────────────────────────────────────────
 export default function SurveyScreen() {
   const {
@@ -155,6 +226,7 @@ export default function SurveyScreen() {
     voiceLogs, addVoiceLog,
     isListening, setIsListening,
     setUnsyncedCount,
+    farmList,
   } = useSurveyStore();
 
   const [prevValues, setPrevValues] = useState<Record<string, number> | null>(null);
@@ -162,6 +234,16 @@ export default function SurveyScreen() {
   const [showManual, setShowManual] = useState(false);
   const [outOfRangeFields, setOutOfRangeFields] = useState<Set<string>>(new Set());
   const [lastVoiceText, setLastVoiceText] = useState('');
+
+  // 세션 편집 모달
+  const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
+
+  // 조사자 자동 로드 (DB 설정값, 수정 불가)
+  useEffect(() => {
+    getConfig('observer').then(obs => {
+      if (obs) setSession({ observer: obs });
+    });
+  }, []);
 
   const fields = session.surveyType === '비대조사'
     ? [...SURVEY_FIELDS_GROWTH]
@@ -339,7 +421,6 @@ export default function SurveyScreen() {
 
     setLastVoiceText(alternatives[0]);
 
-    const { getConfig } = await import('../services/DatabaseService');
     const customTermsJson = await getConfig('customTerms');
     const customTerms: string[] = customTermsJson ? JSON.parse(customTermsJson) : [];
     const extraAliases: Record<string, string> = {};
@@ -365,18 +446,10 @@ export default function SurveyScreen() {
     const ok = await requestPermissions();
     if (!ok) { Alert.alert('권한 필요', '마이크 및 음성인식 권한이 필요합니다.'); return; }
 
-    // 필수값 체크
-    const check = checkRequired({
-      observer: session.observer,
-      farmName: session.farmName,
-      label: session.label,
-      treatment: session.treatment,
-      surveyType: session.surveyType,
-      webAppUrl: '', // URL은 경고만 (차단 옵션)
-    });
-    if (!check.ok) {
-      speak(check.message);
-      Alert.alert('설정 필요', check.message);
+    // 필수값 체크 (농가명/라벨/처리구 미입력 시 차단)
+    if (!session.farmName?.trim()) {
+      speak('농가명을 먼저 입력해 주세요');
+      Alert.alert('입력 필요', '농가명을 탭하여 입력해 주세요.');
       return;
     }
 
@@ -388,13 +461,44 @@ export default function SurveyScreen() {
 
   return (
     <View style={styles.container}>
-      {/* ① 컨텍스트 헤더 */}
+      {/* ① 컨텍스트 헤더 — 탭으로 편집 */}
       <View style={styles.contextBar}>
-        <CtxBadge label="농가" value={session.farmName || '미설정'} alert={!session.farmName} />
-        <CtxBadge label="라벨" value={session.label || '-'} />
-        <CtxBadge label="처리" value={session.treatment || '-'} />
-        <CtxBadge label="유형" value={session.surveyType} />
-        <CtxBadge label="조사자" value={session.observer || '미설정'} alert={!session.observer} />
+        {/* 편집 가능 배지 */}
+        <CtxEditBadge
+          label="농가"
+          value={session.farmName || '탭하여 입력'}
+          alert={!session.farmName}
+          onPress={() => setEditTarget('farmName')}
+        />
+        <CtxEditBadge
+          label="라벨"
+          value={session.label || '-'}
+          onPress={() => setEditTarget('label')}
+        />
+        <CtxEditBadge
+          label="처리구"
+          value={session.treatment || '-'}
+          onPress={() => setEditTarget('treatment')}
+        />
+        {/* 조사유형: 탭으로 순환 */}
+        <TouchableOpacity
+          style={[styles.ctxBadge, styles.ctxBadgeEditable]}
+          onPress={() => {
+            const idx = SURVEY_TYPES.indexOf(session.surveyType as SurveyType);
+            const next = SURVEY_TYPES[(idx + 1) % SURVEY_TYPES.length];
+            setSession({ surveyType: next });
+          }}
+        >
+          <Text style={styles.ctxLabel}>유형 ✎</Text>
+          <Text style={[styles.ctxValue, { color: COLORS.primary }]}>{session.surveyType}</Text>
+        </TouchableOpacity>
+        {/* 조사자: 잠금 (설정에서 관리) */}
+        <View style={[styles.ctxBadge, styles.ctxBadgeLocked]}>
+          <Text style={styles.ctxLabel}>조사자 🔒</Text>
+          <Text style={[styles.ctxValue, { color: COLORS.textMuted }]}>
+            {session.observer || '설정 필요'}
+          </Text>
+        </View>
       </View>
 
       {/* ② 나무/과실 선택 */}
@@ -476,17 +580,35 @@ export default function SurveyScreen() {
         onSubmit={async (f, v) => { await saveMeasurement(f, v, 'manual'); setShowManual(false); }}
         onClose={() => setShowManual(false)}
       />
+
+      <SessionEditModal
+        visible={editTarget !== null}
+        target={editTarget}
+        currentValue={editTarget ? (session[editTarget] as string) : ''}
+        farmList={farmList}
+        onConfirm={(val) => {
+          if (editTarget) setSession({ [editTarget]: val } as Parameters<typeof setSession>[0]);
+          setEditTarget(null);
+        }}
+        onClose={() => setEditTarget(null)}
+      />
     </View>
   );
 }
 
 // ─── 서브 컴포넌트 ─────────────────────────────────────────────────────────────
-function CtxBadge({ label, value, alert }: { label: string; value: string; alert?: boolean }) {
+function CtxEditBadge({ label, value, alert, onPress }: {
+  label: string; value: string; alert?: boolean; onPress: () => void;
+}) {
   return (
-    <View style={[styles.ctxBadge, alert && styles.ctxBadgeAlert]}>
-      <Text style={styles.ctxLabel}>{label}</Text>
+    <TouchableOpacity
+      style={[styles.ctxBadge, styles.ctxBadgeEditable, alert && styles.ctxBadgeAlert]}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
+      <Text style={styles.ctxLabel}>{label} ✎</Text>
       <Text style={[styles.ctxValue, alert && { color: COLORS.warning }]}>{value}</Text>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -521,6 +643,12 @@ const styles = StyleSheet.create({
   ctxBadge: {
     backgroundColor: COLORS.card, borderRadius: 8,
     paddingVertical: 3, paddingHorizontal: 8, alignItems: 'center',
+  },
+  ctxBadgeEditable: {
+    borderWidth: 1, borderColor: COLORS.border,
+  },
+  ctxBadgeLocked: {
+    opacity: 0.7,
   },
   ctxBadgeAlert: { borderWidth: 1, borderColor: COLORS.warning + '80' },
   ctxLabel: { fontSize: 9, color: COLORS.textDim },

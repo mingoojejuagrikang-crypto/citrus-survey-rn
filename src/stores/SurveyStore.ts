@@ -24,6 +24,7 @@ export interface VoiceLog {
   parsedField?: string;
   parsedValue?: number;
   success: boolean;
+  outOfRange?: boolean;
 }
 
 interface SurveyState {
