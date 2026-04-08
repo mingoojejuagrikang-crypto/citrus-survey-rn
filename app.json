@@ -1,0 +1,59 @@
+{
+  "expo": {
+    "name": "감귤 생육조사",
+    "slug": "citrus-survey",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0f1117"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.citrussurvey.app",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "음성으로 생육 데이터를 입력하기 위해 마이크 권한이 필요합니다.",
+        "NSSpeechRecognitionUsageDescription": "음성 인식을 위해 권한이 필요합니다."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0f1117"
+      },
+      "package": "com.citrussurvey.app",
+      "permissions": [
+        "RECORD_AUDIO",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "음성으로 생육 데이터를 입력하기 위해 마이크 권한이 필요합니다.",
+          "speechRecognitionPermission": "음성 인식을 위해 권한이 필요합니다.",
+          "androidSpeechServicePackages": ["com.google.android.googlequicksearchbox"]
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "음성 녹음 백업을 위해 마이크 권한이 필요합니다."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "citrus-survey"
+      }
+    }
+  }
+}
