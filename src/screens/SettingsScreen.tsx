@@ -55,36 +55,39 @@ export default function SettingsScreen() {
   const [helpField, setHelpField] = useState<string | null>(null);
 
   const loadAll = useCallback(async () => {
-    const [obs, url, farms, label, treatment, terms, dbRanges] = await Promise.all([
-      getConfig('observer'),
-      getConfig('webAppUrl'),
-      getConfig('farmList'),
-      getConfig('defaultLabel'),
-      getConfig('defaultTreatment'),
-      getCustomTerms(),
-      getValueRanges(),
-    ]);
-    if (obs) { setObserverLocal(obs); setSession({ observer: obs }); }
-    if (url) { setWebUrl(url); setWebAppUrl(url); }
-    if (farms) setFarmList(JSON.parse(farms));
-    if (label) { setDefaultLabel(label); setSession({ label }); }
-    if (treatment) { setDefaultTreatment(treatment); setSession({ treatment }); }
-    setCustomTerms(terms);
+    try {
+      const obs       = await getConfig('observer');
+      const url       = await getConfig('webAppUrl');
+      const farms     = await getConfig('farmList');
+      const label     = await getConfig('defaultLabel');
+      const treatment = await getConfig('defaultTreatment');
+      const terms     = await getCustomTerms();
+      const dbRanges  = await getValueRanges();
 
-    // 범위 input 초기화: DB 값 우선, 없으면 기본값
-    const inputs: Record<string, { min: string; max: string }> = {};
-    RANGE_FIELDS.forEach(field => {
-      const db = dbRanges[field];
-      const def = DEFAULT_VALUE_RANGES[field];
-      inputs[field] = {
-        min: String(db ? db.min : def.min),
-        max: String(db ? db.max : def.max),
-      };
-    });
-    setRangeInputs(inputs);
+      if (obs)   { setObserverLocal(obs); setSession({ observer: obs }); }
+      if (url)   { setWebUrl(url); setWebAppUrl(url); }
+      if (farms) { setFarmList(JSON.parse(farms)); }
+      if (label) { setDefaultLabel(label); setSession({ label }); }
+      if (treatment) { setDefaultTreatment(treatment); setSession({ treatment }); }
+      setCustomTerms(Array.isArray(terms) ? terms : []);
+
+      // 범위 input 초기화: DB 값 우선, 없으면 기본값
+      const inputs: Record<string, { min: string; max: string }> = {};
+      RANGE_FIELDS.forEach(field => {
+        const dbVal = dbRanges[field];
+        const def   = DEFAULT_VALUE_RANGES[field];
+        inputs[field] = {
+          min: String(dbVal ? dbVal.min : def.min),
+          max: String(dbVal ? dbVal.max : def.max),
+        };
+      });
+      setRangeInputs(inputs);
+    } catch (e) {
+      console.error('[SettingsScreen] loadAll error:', e);
+    }
   }, []);
 
-  useEffect(() => { loadAll(); }, [loadAll]);
+  useEffect(() => { loadAll().catch(e => console.error('[Settings effect]', e)); }, [loadAll]);
 
   async function handleSave() {
     setSaving(true);

@@ -240,9 +240,9 @@ export default function SurveyScreen() {
 
   // 조사자 자동 로드 (DB 설정값, 수정 불가)
   useEffect(() => {
-    getConfig('observer').then(obs => {
-      if (obs) setSession({ observer: obs });
-    });
+    getConfig('observer')
+      .then(obs => { if (obs) setSession({ observer: obs }); })
+      .catch(e => console.error('[SurveyScreen] observer load error:', e));
   }, []);
 
   const fields = session.surveyType === '비대조사'
@@ -274,7 +274,7 @@ export default function SurveyScreen() {
   }, [session.surveyDate, session.farmName, session.treeNo, session.fruitNo,
       session.label, session.treatment, setCurrentSampleId, setCurrentMeasurements]);
 
-  useEffect(() => { loadSample(); }, [loadSample]);
+  useEffect(() => { loadSample().catch(e => console.error('[SurveyScreen] loadSample error:', e)); }, [loadSample]);
 
   // 샘플 upsert + 측정값 저장
   async function saveMeasurement(
@@ -412,22 +412,24 @@ export default function SurveyScreen() {
 
   // 음성인식 이벤트
   useSpeechRecognitionEvent('result', async (event) => {
-    if (!event.isFinal) return;
+    try {
+      if (!event.isFinal) return;
 
-    const alternatives = event.results
-      ? event.results.map((r: { transcript: string }) => r.transcript)
-      : [];
-    if (alternatives.length === 0) return;
+      const alternatives: string[] = event.results
+        ? event.results.map((r: { transcript: string }) => r.transcript)
+        : [];
+      if (alternatives.length === 0) return;
 
-    setLastVoiceText(alternatives[0]);
+      setLastVoiceText(alternatives[0]);
 
-    const customTermsJson = await getConfig('customTerms');
-    const customTerms: string[] = customTermsJson ? JSON.parse(customTermsJson) : [];
-    const extraAliases: Record<string, string> = {};
-    customTerms.forEach(t => { extraAliases[t.toLowerCase()] = t; });
+      // custom terms는 custom_terms 테이블에서 읽음 (config 키 아님)
+      const extraAliases: Record<string, string> = {};
 
-    const tokens = parseBestAlternative(alternatives, extraAliases);
-    await processTokens(tokens);
+      const tokens = parseBestAlternative(alternatives, extraAliases);
+      await processTokens(tokens);
+    } catch (e) {
+      console.error('[SurveyScreen] voice result error:', e);
+    }
   });
 
   useSpeechRecognitionEvent('start', () => setIsListening(true));
