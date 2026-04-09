@@ -382,12 +382,12 @@ export default function SurveyScreen() {
     speak('취소');
   }
 
-  // 단일 토큰 처리 (한 번에 하나씩 입력 방식)
+  // 단일 토큰 처리 — speak() await로 TTS 완료 후 인식 재시작
   async function processToken(token: ParsedToken) {
     if (token.type === 'correction') {
       setCorrectionMode(true);
-      speak('수정');
       addVoiceLog({ id: uuidv4(), timestamp: ts(), rawText: token.raw, parsedType: 'correction', success: true });
+      await speak('수정');
 
     } else if (token.type === 'cancel') {
       await executeUndo();
@@ -396,22 +396,21 @@ export default function SurveyScreen() {
     } else if (token.type === 'context') {
       const updates: Record<string, unknown> = {};
       const k = token.key;
-      if (k === 'treeNo')    updates.treeNo    = token.value as number;
+      if (k === 'treeNo')         updates.treeNo    = token.value as number;
       else if (k === 'fruitNo')   updates.fruitNo   = token.value as number;
       else if (k === 'farmName')  updates.farmName  = token.value as string;
       else if (k === 'label')     updates.label     = token.value as string;
       else if (k === 'treatment') updates.treatment = token.value as string;
       setSession(updates as Parameters<typeof setSession>[0]);
-      speak(token.raw);
       addVoiceLog({ id: uuidv4(), timestamp: ts(), rawText: token.raw, parsedType: 'context', parsedField: token.key, success: true });
       setCorrectionMode(false);
+      await speak(token.raw);
 
     } else if (token.type === 'text_field') {
-      // 병해충, 비고 텍스트 저장
       await saveMeasurement(token.field, token.value, 'voice', token.raw);
-      speak(`${token.field} ${token.value}`);
       addVoiceLog({ id: uuidv4(), timestamp: ts(), rawText: token.raw, parsedType: 'text_field', parsedField: token.field, success: true });
       setCorrectionMode(false);
+      await speak(`${token.field} ${token.value}`);
 
     } else if (token.type === 'measurement') {
       const rangeResult = await checkRange(token.field, token.value);
@@ -419,7 +418,6 @@ export default function SurveyScreen() {
         ? `${token.field} ${token.value}`
         : `${token.field} ${token.value} 확인`;
       await saveMeasurement(token.field, token.value, 'voice', token.raw);
-      speak(ttsText);
       addVoiceLog({
         id: uuidv4(), timestamp: ts(), rawText: token.raw,
         parsedType: 'measurement', parsedField: token.field,
@@ -427,6 +425,10 @@ export default function SurveyScreen() {
         outOfRange: !rangeResult.inRange,
       });
       setCorrectionMode(false);
+      await speak(ttsText);
+
+    } else {
+      // unknown — 짧게 알림음 없이 재시작 (무시)
     }
   }
 
@@ -503,13 +505,17 @@ export default function SurveyScreen() {
       webAppUrl: webAppUrl ?? '',
     });
     if (!result.ok) {
-      speak(result.message);
-      Alert.alert('입력 필요', result.message);
+      const missingList = result.missing.map(m => `• ${m}`).join('\n');
+      Alert.alert(
+        '음성 시작 불가',
+        `아래 항목을 먼저 설정해주세요:\n\n${missingList}\n\n👉 [설정] 탭에서 입력하세요.`,
+        [{ text: '설정으로 이동', onPress: () => {} }, { text: '닫기', style: 'cancel' }]
+      );
       return;
     }
 
     keepListening.current = true;
-    await speak('음성입력 시작');
+    speak('음성입력 시작'); // await 없이 — 동시에 인식 시작
     await startRecognition();
     setIsListening(true);
   }
