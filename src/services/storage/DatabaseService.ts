@@ -583,24 +583,36 @@ class DatabaseService {
       );
 
       const payload: Record<string, string | number | null> = {
-        조사일자: sample.surveyDate,
-        농가명: sample.farmName,
-        라벨: sample.label,
-        처리구: sample.treatment,
-        조사나무: sample.treeNo,
-        조사과실: sample.fruitNo,
-        조사자: sample.observer,
       };
       for (const measurement of measurements) {
         payload[measurement.item_name] = measurement.numeric_value ?? measurement.text_value;
       }
-      payload.병해충 = payload.병해충 ?? null;
-      payload.비고 = payload.비고 ?? null;
+      const memo = typeof payload.비고 === 'string' ? payload.비고 : '';
+      delete payload.비고;
 
       result.push({
         sampleId: sample.id,
-        sheetName: sample.surveyType,
-        payload,
+        surveyType: sample.surveyType,
+        row: {
+          surveyDate: sample.surveyDate,
+          surveyType: sample.surveyType,
+          farmName: sample.farmName,
+          label: sample.label,
+          treatment: sample.treatment,
+          treeNo: sample.treeNo,
+          fruitNo: sample.fruitNo,
+          measurements: Object.entries(payload).reduce<Record<string, string | number>>(
+            (accumulator, [key, value]) => {
+              if (typeof value === 'string' || typeof value === 'number') {
+                accumulator[key] = value;
+              }
+              return accumulator;
+            },
+            {}
+          ),
+          memo,
+          observer: sample.observer,
+        },
       });
     }
 

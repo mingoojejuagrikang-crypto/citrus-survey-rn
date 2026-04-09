@@ -158,8 +158,21 @@ export type ComparisonRow = {
   isOutOfRange: boolean;
 };
 
+export type AppScriptSyncRow = {
+  surveyDate: string;
+  surveyType: SurveyType;
+  farmName: string;
+  label: string;
+  treatment: string;
+  treeNo: number;
+  fruitNo: number;
+  measurements: Record<string, string | number>;
+  memo: string;
+  observer: string;
+};
+
 export type SyncPayloadRow = {
   sampleId: string;
-  sheetName: SurveyType;
-  payload: Record<string, string | number | null>;
+  surveyType: SurveyType;
+  row: AppScriptSyncRow;
 };

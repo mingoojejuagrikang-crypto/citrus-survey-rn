@@ -1,4 +1,5 @@
 import { GOOGLE_SHEETS_ID } from '../../constants/app';
+import type { AppScriptSyncRow } from '../../types/domain';
 import { databaseService } from '../storage/DatabaseService';
 import { parseSyncHttpResponse } from './syncParsers';
 
@@ -7,7 +8,7 @@ type SyncTransport = 'json' | 'form';
 class SyncService {
   private async postRows(
     webAppUrl: string,
-    rows: Array<{ sheetName: string; values: Record<string, string | number | null> }>,
+    rows: AppScriptSyncRow[],
     transport: SyncTransport
   ) {
     if (transport === 'json') {
@@ -45,8 +46,7 @@ class SyncService {
     }
 
     const rows = pendingRows.map((entry) => ({
-      sheetName: entry.sheetName,
-      values: entry.payload,
+      ...entry.row,
     }));
 
     const attempts: string[] = [];

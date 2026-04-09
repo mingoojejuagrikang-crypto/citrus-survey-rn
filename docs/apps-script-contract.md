@@ -47,7 +47,7 @@ GET /exec?year=2025&farm=이원창
 
 ## 2. POST 동기화 API
 
-클라이언트 1차 시도:
+현재 앱이 보내는 형식:
 ```http
 POST /exec
 Content-Type: application/json
@@ -60,20 +60,20 @@ Content-Type: application/json
   "sheetId": "1_d5L8jI583LN1n6rJ1H8_mPcsKMgEiYnYXhS_JOppDU",
   "rows": [
     {
-      "sheetName": "비대조사",
-      "values": {
-        "조사일자": "2026-04-09",
-        "농가명": "이원창",
-        "라벨": "A",
-        "처리구": "시험",
-        "조사나무": 1,
-        "조사과실": 1,
-        "조사자": "홍길동",
+      "surveyDate": "2026-04-09",
+      "surveyType": "비대조사",
+      "farmName": "이원창",
+      "label": "A",
+      "treatment": "시험",
+      "treeNo": 1,
+      "fruitNo": 1,
+      "measurements": {
         "횡경": 52.3,
         "종경": 48.1,
-        "병해충": "응애",
-        "비고": "과실 상태 양호"
-      }
+        "병해충": "응애"
+      },
+      "memo": "과실 상태 양호",
+      "observer": "홍길동"
     }
   ]
 }
@@ -107,22 +107,29 @@ rows=[...JSON...]
 { "status": "error", "message": "원인" }
 ```
 
-## 3. 시트 upsert 기준
+## 3. 현재 첨부된 서버 코드의 실제 동작
+
+- `doPost`는 현재 `appendRow` 방식
+- 즉, 같은 키가 있어도 update가 아니라 새 행 추가
+- 요구사항의 upsert를 만족하려면 `appendRow`가 아니라 기존 키 검색 후 update가 필요
+
+## 4. 요구사항 기준 이상적인 시트 upsert 기준
 
 - 시트 분리: `비대조사`, `품질조사`, `추가조사`
 - 샘플 키:
   `조사일자 + 농가명 + 라벨 + 처리구 + 조사나무 + 조사과실`
 - 같은 키가 있으면 update, 없으면 append
 
-## 4. 컬럼 순서
+## 5. 컬럼 순서
 
 ```txt
 조사일자, 농가명, 라벨, 처리구, 조사나무, 조사과실, 조사자,
 [측정항목들...], 병해충, 비고
 ```
 
-## 5. 현재 상태
+## 6. 현재 상태
 
 - `GET`은 실제 서버에서 정상 응답 확인
-- `POST`는 현재 배포 상태에서 JSON 응답을 주지 않아 클라이언트에서 동기화를 실패로 처리함
-- 서버 `doPost` 구현 또는 웹앱 재배포 확인이 필요함
+- 첨부된 `doPost` 코드 자체는 JSON 응답을 반환하도록 작성되어 있음
+- 따라서 현재 live 웹앱이 HTML을 반환하는 문제는 코드보다 배포본 불일치 가능성이 큼
+- 우선 Apps Script를 현재 코드로 재배포한 뒤 다시 테스트해야 함

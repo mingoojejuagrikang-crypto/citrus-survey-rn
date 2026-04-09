@@ -47,6 +47,8 @@ npm run ios:release
 - `POST` 동기화 API는 현재 JSON 응답을 주지 않음
   앱에서는 JSON/form 두 방식 모두 진단하고 실패 이유를 설정 탭에 표시함
 - 따라서 현재는 로컬 저장과 과거값 복구 테스트는 가능하고, Google Sheets 업로드는 서버 `doPost` 배포 상태 확인이 필요함
+- 첨부된 Apps Script 원본 기준으로는 앱 payload 형식을 맞춰 수정 완료
+  현재 남은 가능성은 live 웹앱이 최신 코드로 재배포되지 않은 경우
 
 ## 서버 연동 문서
 - 계약 문서: `docs/apps-script-contract.md`

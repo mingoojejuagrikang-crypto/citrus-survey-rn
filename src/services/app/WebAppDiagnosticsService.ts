@@ -60,7 +60,20 @@ class WebAppDiagnosticsService {
     const payload = {
       action: 'upsertSamples',
       sheetId: GOOGLE_SHEETS_ID,
-      rows: [],
+      rows: [
+        {
+          surveyDate: '2026-04-09',
+          surveyType: '비대조사',
+          farmName: '테스트농가',
+          label: 'T',
+          treatment: '시험',
+          treeNo: 1,
+          fruitNo: 1,
+          measurements: { 횡경: 10.1, 종경: 9.9 },
+          memo: '진단요청',
+          observer: 'codex',
+        },
+      ],
     };
 
     const jsonResponse = await fetch(webAppUrl, {
@@ -85,7 +98,7 @@ class WebAppDiagnosticsService {
     const formBody = new URLSearchParams({
       action: 'upsertSamples',
       sheetId: GOOGLE_SHEETS_ID,
-      rows: '[]',
+      rows: JSON.stringify(payload.rows),
     });
     const formResponse = await fetch(webAppUrl, {
       method: 'POST',
