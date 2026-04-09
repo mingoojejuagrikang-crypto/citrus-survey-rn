@@ -1,5 +1,6 @@
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
+import { ActionButton } from '../components/ActionButton';
 import { colors } from '../constants/theme';
 import { useAppBootstrap } from '../hooks/useAppBootstrap';
 import { useAutoSync } from '../hooks/useAutoSync';
@@ -12,6 +13,7 @@ export function AppRoot() {
 
   const isBootstrapping = useSurveyStore((state) => state.isBootstrapping);
   const bootstrapError = useSurveyStore((state) => state.bootstrapError);
+  const retryBootstrap = useSurveyStore((state) => state.retryBootstrap);
 
   if (isBootstrapping) {
     return (
@@ -28,6 +30,7 @@ export function AppRoot() {
       {bootstrapError ? (
         <View style={styles.banner}>
           <Text style={styles.bannerText}>{bootstrapError}</Text>
+          <ActionButton label="모델 재시도" onPress={retryBootstrap} variant="secondary" />
         </View>
       ) : null}
     </View>
@@ -52,8 +55,9 @@ const styles = StyleSheet.create({
   },
   banner: {
     backgroundColor: colors.danger,
+    gap: 8,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
   },
   bannerText: {
     color: colors.text,

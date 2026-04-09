@@ -7,6 +7,7 @@ export type VoiceStatus = 'idle' | 'model-loading' | 'ready' | 'recording' | 'pr
 type SurveyStore = {
   isBootstrapping: boolean;
   bootstrapError: string | null;
+  bootstrapNonce: number;
   voiceStatus: VoiceStatus;
   modelDownloadProgress: number;
   liveTranscript: string;
@@ -26,11 +27,13 @@ type SurveyStore = {
   setProgressSummary: (progressSummary: ProgressSummary) => void;
   setLastFeedback: (lastFeedback: string) => void;
   setLastSyncMessage: (lastSyncMessage: string) => void;
+  retryBootstrap: () => void;
 };
 
 export const useSurveyStore = create<SurveyStore>((set) => ({
   isBootstrapping: true,
   bootstrapError: null,
+  bootstrapNonce: 0,
   voiceStatus: 'idle',
   modelDownloadProgress: 0,
   liveTranscript: '',
@@ -59,4 +62,12 @@ export const useSurveyStore = create<SurveyStore>((set) => ({
   setProgressSummary: (progressSummary) => set({ progressSummary }),
   setLastFeedback: (lastFeedback) => set({ lastFeedback }),
   setLastSyncMessage: (lastSyncMessage) => set({ lastSyncMessage }),
+  retryBootstrap: () =>
+    set((state) => ({
+      bootstrapNonce: state.bootstrapNonce + 1,
+      isBootstrapping: true,
+      bootstrapError: null,
+      modelDownloadProgress: 0,
+      voiceStatus: 'model-loading',
+    })),
 }));

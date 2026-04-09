@@ -49,27 +49,21 @@ export function SettingsScreen() {
   );
 
   const saveBasics = useCallback(async () => {
-    setObserver(observerInput.trim());
-    setWebAppUrl(webAppUrlInput.trim());
-    setFarms(
-      farmsInput
-        .split(',')
-        .map((entry) => entry.trim())
-        .filter(Boolean)
-    );
+    const nextObserver = observerInput.trim();
+    const nextWebAppUrl = webAppUrlInput.trim();
+    const nextFarms = farmsInput
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    setObserver(nextObserver);
+    setWebAppUrl(nextWebAppUrl);
+    setFarms(nextFarms);
 
     await Promise.all([
-      databaseService.setConfigValue('observer', observerInput.trim()),
-      databaseService.setConfigValue('webAppUrl', webAppUrlInput.trim()),
-      databaseService.setConfigValue(
-        'farms',
-        JSON.stringify(
-          farmsInput
-            .split(',')
-            .map((entry) => entry.trim())
-            .filter(Boolean)
-        )
-      ),
+      databaseService.setConfigValue('observer', nextObserver),
+      databaseService.setConfigValue('webAppUrl', nextWebAppUrl),
+      databaseService.setConfigValue('farms', JSON.stringify(nextFarms)),
     ]);
 
     Alert.alert('저장 완료', '기본 설정을 저장했습니다.');
@@ -204,8 +198,11 @@ export function SettingsScreen() {
                     {
                       text: '삭제',
                       style: 'destructive',
-                      onPress: () => {
-                        void databaseService.resetAllData();
+                      onPress: async () => {
+                        await databaseService.resetAllData();
+                        setCustomTerms(await databaseService.listCustomTerms());
+                        setValueRanges(await databaseService.getValueRanges());
+                        Alert.alert('초기화 완료', '로컬 데이터가 초기화되었습니다.');
                       },
                     },
                   ])

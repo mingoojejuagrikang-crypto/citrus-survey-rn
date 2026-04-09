@@ -6,6 +6,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 
 import { ActionButton } from '../components/ActionButton';
 import { ComparisonTable } from '../components/ComparisonTable';
@@ -54,6 +55,12 @@ export function SurveyScreen() {
     setComparisonRows(rows);
     setProgressSummary(summary);
   }, [enabledItems, session, setComparisonRows, setProgressSummary, setRecentLogs]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshPanels();
+    }, [refreshPanels])
+  );
 
   const validateBeforeStart = useCallback(() => {
     if (!session.observer) {
@@ -227,6 +234,9 @@ export function SurveyScreen() {
           <Text style={styles.observer}>조사자 {session.observer || '미설정'}</Text>
           <Text style={styles.observer}>날짜 {session.surveyDate}</Text>
         </View>
+        <Text style={styles.helperText}>
+          첫 테스트는 설정 탭에서 조사자와 농가를 저장한 뒤, 여기서 `수동 입력`으로 `횡경 52.3`처럼 넣으면 됩니다.
+        </Text>
       </Panel>
 
       <View style={styles.stepperRow}>
@@ -329,6 +339,11 @@ const styles = StyleSheet.create({
   observer: {
     color: colors.subtext,
     fontSize: 13,
+  },
+  helperText: {
+    color: colors.info,
+    fontSize: 12,
+    lineHeight: 17,
   },
   stepperRow: {
     flexDirection: 'row',

@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 
 import { ActionButton } from '../components/ActionButton';
 import { Panel } from '../components/Panel';
@@ -34,6 +35,12 @@ export function ProgressScreen() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refresh();
+    }, [refresh])
+  );
 
   return (
     <View style={styles.screen}>

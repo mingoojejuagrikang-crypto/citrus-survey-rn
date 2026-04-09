@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 
-import { databaseService } from '../services/storage/DatabaseService';
-import { whisperService } from '../services/audio/WhisperService';
+import { bootstrapApp } from '../services/app/bootstrapApp';
 import { useSessionStore } from '../store/sessionStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { useSurveyStore } from '../store/surveyStore';
@@ -16,52 +15,42 @@ export function useAppBootstrap() {
   const setBootstrapState = useSurveyStore((state) => state.setBootstrapState);
   const setVoiceStatus = useSurveyStore((state) => state.setVoiceStatus);
   const setModelDownloadProgress = useSurveyStore((state) => state.setModelDownloadProgress);
+  const setLastFeedback = useSurveyStore((state) => state.setLastFeedback);
+  const retryBootstrap = useSurveyStore((state) => state.retryBootstrap);
 
   useEffect(() => {
     let isMounted = true;
 
     const run = async () => {
       try {
-        await databaseService.initialize();
-        const config = await databaseService.getConfigMap();
-        const ranges = await databaseService.getValueRanges();
-        const customTerms = await databaseService.listCustomTerms();
+        const result = await bootstrapApp((progress) => {
+          if (isMounted) {
+            setModelDownloadProgress(progress);
+          }
+        });
 
         if (!isMounted) {
           return;
         }
 
         replaceContext({
-          observer: config.observer ?? '',
+          observer: result.observer,
         });
-        setWebAppUrl(config.webAppUrl ?? '');
-        setFarms(JSON.parse(config.farms ?? '[]') as string[]);
-        setEnabledItems(
-          JSON.parse(config.enabled_items ?? '{}') as ReturnType<typeof useSettingsStore.getState>['enabledItems']
-        );
-        setValueRanges(ranges);
-        setCustomTerms(customTerms);
+        setWebAppUrl(result.webAppUrl);
+        setFarms(result.farms);
+        setEnabledItems(result.enabledItems);
+        setValueRanges(result.valueRanges);
+        setCustomTerms(result.customTerms);
         setBootstrapState({ isBootstrapping: false, bootstrapError: null });
-        setVoiceStatus('model-loading');
-
-        try {
-          await whisperService.initializeContext(({ progress }) => {
-            if (isMounted) {
-              setModelDownloadProgress(progress);
-            }
+        if (result.modelReady) {
+          setModelDownloadProgress(100);
+          setVoiceStatus('ready');
+        } else {
+          setVoiceStatus('error');
+          setBootstrapState({
+            bootstrapError: result.modelError,
           });
-          if (isMounted) {
-            setModelDownloadProgress(100);
-            setVoiceStatus('ready');
-          }
-        } catch (error) {
-          if (isMounted) {
-            setVoiceStatus('error');
-            setBootstrapState({
-              bootstrapError:
-                error instanceof Error ? error.message : 'Whisper 모델 초기화에 실패했습니다.',
-            });
-          }
+          setLastFeedback(result.modelError ?? 'Whisper 모델 준비 실패');
         }
       } catch (error) {
         if (isMounted) {
@@ -80,10 +69,12 @@ export function useAppBootstrap() {
     };
   }, [
     replaceContext,
+    retryBootstrap,
     setBootstrapState,
     setCustomTerms,
     setEnabledItems,
     setFarms,
+    setLastFeedback,
     setModelDownloadProgress,
     setValueRanges,
     setVoiceStatus,
