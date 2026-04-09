@@ -25,6 +25,7 @@ npm run typecheck
 npm run lint
 npm run test
 npm run ios:device
+npm run ios:release
 ```
 
 ## 현재 기본 연동값
@@ -46,3 +47,14 @@ npm run ios:device
 - `POST` 동기화 API는 현재 JSON 응답을 주지 않음
   앱에서는 JSON/form 두 방식 모두 진단하고 실패 이유를 설정 탭에 표시함
 - 따라서 현재는 로컬 저장과 과거값 복구 테스트는 가능하고, Google Sheets 업로드는 서버 `doPost` 배포 상태 확인이 필요함
+
+## 서버 연동 문서
+- 계약 문서: `docs/apps-script-contract.md`
+- 예시 Apps Script: `server/apps_script_example.gs`
+
+## iOS Release 산출물
+- archive 명령: `npm run ios:archive`
+- export 명령: `npm run ios:export`
+- 통합 실행: `npm run ios:release`
+- 현재 export 성공 산출물:
+  `ios/export/output/app.ipa`

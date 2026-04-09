@@ -12,7 +12,10 @@
     "typecheck": "tsc --noEmit",
     "prebuild:ios": "expo prebuild --platform ios --clean",
     "prebuild": "expo prebuild --clean",
-    "pod:install": "cd ios && pod install"
+    "pod:install": "cd ios && pod install",
+    "ios:archive": "xcodebuild -workspace ios/app.xcworkspace -scheme app -configuration Release -archivePath ios/build/CitrusSurvey.xcarchive DEVELOPMENT_TEAM=X473XNY2W5 PRODUCT_BUNDLE_IDENTIFIER=com.citrussurvey.app archive",
+    "ios:export": "xcodebuild -exportArchive -archivePath ios/build/CitrusSurvey.xcarchive -exportPath ios/export/output -exportOptionsPlist ios/export/ExportOptions.plist",
+    "ios:release": "npm run ios:archive && npm run ios:export"
   },
   "dependencies": {
     "@react-native-community/netinfo": "11.4.1",
