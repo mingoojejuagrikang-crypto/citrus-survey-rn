@@ -1,9 +1,9 @@
 import type { SurveyType } from '../types/domain';
 
 export const DEFAULT_WEB_APP_URL =
-  'https://script.google.com/macros/s/AKfycbyGayON8Uykgzb8H_sozo5ngvLG-39znIWJrcyuvxKoHspx_ADScgOSoBTLzl4CtWnE/exec';
+  'https://script.google.com/macros/s/AKfycbzjprz2m4z_JzT-mu0W6kv_-p_YfyFfBcHI7mIYBAApRXoBXAbs1Sv1eZv-JflmReCP/exec';
 
-export const GOOGLE_SHEETS_ID = '1_d5L8jI583LN1n6rJ1H8_mPcsKMgEiYnYXhS_JOppDU';
+export const GOOGLE_SHEETS_ID = '1Cdit6rSHr-cfFYMGhNoc0Ju19pKc57RsMpqDGEz4RB8';
 
 export const DEFAULT_FARMS = ['이원창', '강남호', '양승보'];
 

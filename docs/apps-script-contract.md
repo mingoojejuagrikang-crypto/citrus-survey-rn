@@ -57,7 +57,7 @@ Content-Type: application/json
 ```json
 {
   "action": "upsertSamples",
-  "sheetId": "1_d5L8jI583LN1n6rJ1H8_mPcsKMgEiYnYXhS_JOppDU",
+  "sheetId": "1Cdit6rSHr-cfFYMGhNoc0Ju19pKc57RsMpqDGEz4RB8",
   "rows": [
     {
       "surveyDate": "2026-04-09",
@@ -130,6 +130,5 @@ rows=[...JSON...]
 ## 6. 현재 상태
 
 - `GET`은 실제 서버에서 정상 응답 확인
-- 첨부된 `doPost` 코드 자체는 JSON 응답을 반환하도록 작성되어 있음
-- 따라서 현재 live 웹앱이 HTML을 반환하는 문제는 코드보다 배포본 불일치 가능성이 큼
-- 우선 Apps Script를 현재 코드로 재배포한 뒤 다시 테스트해야 함
+- `POST`도 실제 Node `fetch` 기준 정상 응답 확인
+- 현재 live 서버는 append 방식으로 정상 저장되며, 엄밀한 upsert는 아직 미구현

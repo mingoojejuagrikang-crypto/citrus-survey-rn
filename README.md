@@ -30,9 +30,9 @@ npm run ios:release
 
 ## 현재 기본 연동값
 - Apps Script URL:
-  `https://script.google.com/macros/s/AKfycbyGayON8Uykgzb8H_sozo5ngvLG-39znIWJrcyuvxKoHspx_ADScgOSoBTLzl4CtWnE/exec`
+  `https://script.google.com/macros/s/AKfycbzjprz2m4z_JzT-mu0W6kv_-p_YfyFfBcHI7mIYBAApRXoBXAbs1Sv1eZv-JflmReCP/exec`
 - Google Sheets ID:
-  `1_d5L8jI583LN1n6rJ1H8_mPcsKMgEiYnYXhS_JOppDU`
+  `1Cdit6rSHr-cfFYMGhNoc0Ju19pKc57RsMpqDGEz4RB8`
 - 기본 농가:
   `이원창`, `강남호`, `양승보`
 
@@ -44,11 +44,10 @@ npm run ios:release
 ## 현재 서버 확인 결과
 - `GET ?year=&farm=` 복구 API는 실제 응답 확인 완료
   형식: `{"status":"ok","data":{"비대조사":[...],"품질조사":[...]}}`
-- `POST` 동기화 API는 현재 JSON 응답을 주지 않음
-  앱에서는 JSON/form 두 방식 모두 진단하고 실패 이유를 설정 탭에 표시함
-- 따라서 현재는 로컬 저장과 과거값 복구 테스트는 가능하고, Google Sheets 업로드는 서버 `doPost` 배포 상태 확인이 필요함
-- 첨부된 Apps Script 원본 기준으로는 앱 payload 형식을 맞춰 수정 완료
-  현재 남은 가능성은 live 웹앱이 최신 코드로 재배포되지 않은 경우
+- `POST` 동기화 API도 실제 Node `fetch` 기준 정상 JSON 응답 확인
+  응답: `{"status":"ok","success":true,"count":1}`
+- 현재 남은 서버 측 리스크는 `appendRow` 방식이라 동일 키 재전송 시 중복 행이 생긴다는 점
+- 즉 연동은 완료됐고, 요구사항의 엄밀한 upsert 보장은 Apps Script 후속 개선 항목임
 
 ## 서버 연동 문서
 - 계약 문서: `docs/apps-script-contract.md`

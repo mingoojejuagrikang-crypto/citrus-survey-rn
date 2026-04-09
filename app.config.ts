@@ -36,9 +36,9 @@ const config: ExpoConfig = {
   },
   plugins: ['expo-sqlite'],
   extra: {
-    googleSheetsId: '1_d5L8jI583LN1n6rJ1H8_mPcsKMgEiYnYXhS_JOppDU',
+    googleSheetsId: '1Cdit6rSHr-cfFYMGhNoc0Ju19pKc57RsMpqDGEz4RB8',
     defaultWebAppUrl:
-      'https://script.google.com/macros/s/AKfycbyGayON8Uykgzb8H_sozo5ngvLG-39znIWJrcyuvxKoHspx_ADScgOSoBTLzl4CtWnE/exec',
+      'https://script.google.com/macros/s/AKfycbzjprz2m4z_JzT-mu0W6kv_-p_YfyFfBcHI7mIYBAApRXoBXAbs1Sv1eZv-JflmReCP/exec',
   },
 };
 
