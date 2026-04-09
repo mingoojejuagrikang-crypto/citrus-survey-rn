@@ -48,16 +48,12 @@ export interface RequiredCheckResult {
 export function checkRequired(params: {
   observer: string;
   farmName: string;
-  label: string;
-  treatment: string;
   surveyType: string;
   webAppUrl: string;
 }): RequiredCheckResult {
   const missing: string[] = [];
   if (!params.observer?.trim()) missing.push('조사자 이름');
   if (!params.farmName?.trim()) missing.push('농가명');
-  if (!params.label?.trim()) missing.push('라벨');
-  if (!params.treatment?.trim()) missing.push('처리구');
   if (!params.surveyType?.trim()) missing.push('조사유형');
   if (!params.webAppUrl?.trim()) missing.push('시트 연동 URL');
 

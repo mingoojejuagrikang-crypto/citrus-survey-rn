@@ -63,10 +63,9 @@ export async function stopClipRecording(): Promise<string | null> {
 
 export { useSpeechRecognitionEvent };
 
-export function parseRecognitionResult(event: ExpoSpeechRecognitionResultEvent): ParsedToken[] {
+export function parseRecognitionResult(event: ExpoSpeechRecognitionResultEvent): ParsedToken {
   const alternatives = event.results?.[0]
     ? [event.results[0].transcript, ...(event.results.slice(1).map(r => r.transcript))]
     : [];
-  if (alternatives.length === 0) return [];
   return parseBestAlternative(alternatives);
 }

@@ -33,7 +33,7 @@ function CompareTable({
   previousDate: string | null;
   outOfRangeFields: Set<string>;
 }) {
-  const mFields = fields.filter(f => f !== '비고');
+  const mFields = fields.filter(f => f !== '비고' && f !== '병해충');
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false}>
       <View>
@@ -304,7 +304,20 @@ export default function SurveyScreen() {
     }
     if (field === '비고') {
       await updateSampleMemo(sampleId, String(value));
-      updateMeasurement('비고', 0); // 비고는 숫자 없이 표시용
+      updateMeasurement('비고', 0);
+    } else if (field === '병해충') {
+      // 텍스트 타입 — raw_voice_text에 저장, item_value는 null
+      await upsertMeasurement({
+        measurement_id: uuidv4(),
+        sample_id: sampleId,
+        item_name: field,
+        item_value: null,
+        input_method: inputMethod,
+        raw_voice_text: String(value),
+        audio_clip_path: '',
+        updated_at: new Date().toISOString(),
+      });
+      updateMeasurement(field, 0);
     } else {
       const num = typeof value === 'number' ? value : parseFloat(String(value));
       // undo 스택에 이전값 저장
@@ -365,52 +378,55 @@ export default function SurveyScreen() {
     speak('취소');
   }
 
-  // 스트림 파싱 처리
-  async function processTokens(tokens: ParsedToken[]) {
-    for (const token of tokens) {
-      if (token.type === 'correction') {
-        setCorrectionMode(true);
-        speak('수정');
-        addVoiceLog({ id: uuidv4(), timestamp: ts(), rawText: token.raw, parsedType: 'correction', success: true });
-      } else if (token.type === 'cancel') {
-        await executeUndo();
-        addVoiceLog({ id: uuidv4(), timestamp: ts(), rawText: token.raw, parsedType: 'cancel', success: true });
-      } else if (token.type === 'context') {
-        const updates: Record<string, unknown> = {};
-        const k = token.key;
-        if (k === 'treeNo') updates.treeNo = token.value as number;
-        else if (k === 'fruitNo') updates.fruitNo = token.value as number;
-        else if (k === 'farmName') updates.farmName = token.value as string;
-        else if (k === 'label') updates.label = token.value as string;
-        else if (k === 'treatment') updates.treatment = token.value as string;
-        setSession(updates as Parameters<typeof setSession>[0]);
-        speak(token.raw);
-        addVoiceLog({ id: uuidv4(), timestamp: ts(), rawText: token.raw, parsedType: 'context', parsedField: token.key, success: true });
-        setCorrectionMode(false);
-      } else if (token.type === 'memo') {
-        await saveMeasurement('비고', token.text, 'voice', token.raw);
-        speak(token.raw);
-        addVoiceLog({ id: uuidv4(), timestamp: ts(), rawText: token.raw, parsedType: 'memo', success: true });
-        setCorrectionMode(false);
-      } else if (token.type === 'measurement') {
-        const rangeResult = await checkRange(token.field, token.value);
-        const ttsText = rangeResult.inRange
-          ? `${token.field} ${token.value}`
-          : `${token.field} ${token.value} 확인`;
-        await saveMeasurement(token.field, token.value, 'voice', token.raw);
-        speak(ttsText);
-        addVoiceLog({
-          id: uuidv4(), timestamp: ts(), rawText: token.raw,
-          parsedType: 'measurement', parsedField: token.field,
-          parsedValue: token.value, success: true,
-          outOfRange: !rangeResult.inRange,
-        });
-        setCorrectionMode(false);
-      }
+  // 단일 토큰 처리 (한 번에 하나씩 입력 방식)
+  async function processToken(token: ParsedToken) {
+    if (token.type === 'correction') {
+      setCorrectionMode(true);
+      speak('수정');
+      addVoiceLog({ id: uuidv4(), timestamp: ts(), rawText: token.raw, parsedType: 'correction', success: true });
+
+    } else if (token.type === 'cancel') {
+      await executeUndo();
+      addVoiceLog({ id: uuidv4(), timestamp: ts(), rawText: token.raw, parsedType: 'cancel', success: true });
+
+    } else if (token.type === 'context') {
+      const updates: Record<string, unknown> = {};
+      const k = token.key;
+      if (k === 'treeNo')    updates.treeNo    = token.value as number;
+      else if (k === 'fruitNo')   updates.fruitNo   = token.value as number;
+      else if (k === 'farmName')  updates.farmName  = token.value as string;
+      else if (k === 'label')     updates.label     = token.value as string;
+      else if (k === 'treatment') updates.treatment = token.value as string;
+      setSession(updates as Parameters<typeof setSession>[0]);
+      speak(token.raw);
+      addVoiceLog({ id: uuidv4(), timestamp: ts(), rawText: token.raw, parsedType: 'context', parsedField: token.key, success: true });
+      setCorrectionMode(false);
+
+    } else if (token.type === 'text_field') {
+      // 병해충, 비고 텍스트 저장
+      await saveMeasurement(token.field, token.value, 'voice', token.raw);
+      speak(`${token.field} ${token.value}`);
+      addVoiceLog({ id: uuidv4(), timestamp: ts(), rawText: token.raw, parsedType: 'text_field', parsedField: token.field, success: true });
+      setCorrectionMode(false);
+
+    } else if (token.type === 'measurement') {
+      const rangeResult = await checkRange(token.field, token.value);
+      const ttsText = rangeResult.inRange
+        ? `${token.field} ${token.value}`
+        : `${token.field} ${token.value} 확인`;
+      await saveMeasurement(token.field, token.value, 'voice', token.raw);
+      speak(ttsText);
+      addVoiceLog({
+        id: uuidv4(), timestamp: ts(), rawText: token.raw,
+        parsedType: 'measurement', parsedField: token.field,
+        parsedValue: token.value, success: true,
+        outOfRange: !rangeResult.inRange,
+      });
+      setCorrectionMode(false);
     }
   }
 
-  // 음성인식 이벤트
+  // 음성인식 이벤트 — 한 번에 하나씩 처리
   useSpeechRecognitionEvent('result', async (event) => {
     try {
       if (!event.isFinal) return;
@@ -422,11 +438,8 @@ export default function SurveyScreen() {
 
       setLastVoiceText(alternatives[0]);
 
-      // custom terms는 custom_terms 테이블에서 읽음 (config 키 아님)
-      const extraAliases: Record<string, string> = {};
-
-      const tokens = parseBestAlternative(alternatives, extraAliases);
-      await processTokens(tokens);
+      const token = parseBestAlternative(alternatives, {});
+      await processToken(token);
     } catch (e) {
       console.error('[SurveyScreen] voice result error:', e);
     }
@@ -448,10 +461,17 @@ export default function SurveyScreen() {
     const ok = await requestPermissions();
     if (!ok) { Alert.alert('권한 필요', '마이크 및 음성인식 권한이 필요합니다.'); return; }
 
-    // 필수값 체크 (농가명/라벨/처리구 미입력 시 차단)
-    if (!session.farmName?.trim()) {
-      speak('농가명을 먼저 입력해 주세요');
-      Alert.alert('입력 필요', '농가명을 탭하여 입력해 주세요.');
+    // 필수값 체크 (4개: 조사자, 농가명, 조사유형, URL)
+    const webAppUrl = await getConfig('webAppUrl');
+    const result = checkRequired({
+      observer: session.observer,
+      farmName: session.farmName,
+      surveyType: session.surveyType,
+      webAppUrl: webAppUrl ?? '',
+    });
+    if (!result.ok) {
+      speak(result.message);
+      Alert.alert('입력 필요', result.message);
       return;
     }
 
