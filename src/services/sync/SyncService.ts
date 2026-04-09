@@ -27,9 +27,18 @@ class SyncService {
       throw new Error(`동기화 실패: ${response.status}`);
     }
 
-    const payload = (await response.json()) as { success?: boolean };
+    const contentType = response.headers.get('content-type') ?? '';
+    const rawText = await response.text();
+    if (!contentType.includes('application/json')) {
+      throw new Error('동기화 웹앱이 JSON을 반환하지 않습니다. doPost 배포 상태를 확인하세요.');
+    }
+
+    const payload = JSON.parse(rawText) as { success?: boolean; status?: string; message?: string };
     if (payload.success === false) {
-      throw new Error('서버가 동기화를 거부했습니다.');
+      throw new Error(payload.message ?? '서버가 동기화를 거부했습니다.');
+    }
+    if (payload.status === 'error') {
+      throw new Error(payload.message ?? '서버가 동기화를 거부했습니다.');
     }
 
     await databaseService.markSamplesSynced(pendingRows.map((row) => row.sampleId));

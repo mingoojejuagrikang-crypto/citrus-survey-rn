@@ -6,6 +6,7 @@ import { Panel } from '../components/Panel';
 import { colors } from '../constants/theme';
 import { MEASUREMENT_ITEM_LABELS } from '../constants/items';
 import { historyService } from '../services/history/HistoryService';
+import { webAppDiagnosticsService } from '../services/app/WebAppDiagnosticsService';
 import { databaseService } from '../services/storage/DatabaseService';
 import { useSessionStore } from '../store/sessionStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -31,6 +32,7 @@ export function SettingsScreen() {
   const [farmsInput, setFarmsInput] = useState(farms.join(', '));
   const [customAlias, setCustomAlias] = useState('');
   const [customCanonical, setCustomCanonical] = useState<MeasurementItemName>('횡경');
+  const [diagnosticMessage, setDiagnosticMessage] = useState('');
 
   const toggleItem = useCallback(
     (surveyType: SurveyType, itemName: MeasurementItemName) => {
@@ -104,6 +106,25 @@ export function SettingsScreen() {
       Alert.alert('복구 실패', error instanceof Error ? error.message : '복구 중 오류');
     }
   }, [farmName, webAppUrl]);
+
+  const runDiagnostics = useCallback(async () => {
+    const year = new Date().getFullYear() - 1;
+    const targetFarm = farmName || farms[0] || '이원창';
+    const [getResult, postResult] = await Promise.all([
+      webAppDiagnosticsService.testHistoryGet(webAppUrl, year, targetFarm),
+      webAppDiagnosticsService.testSyncPost(webAppUrl),
+    ]);
+    setDiagnosticMessage(
+      [
+        `[GET] ${getResult.message}`,
+        getResult.details ? `- ${getResult.details}` : null,
+        `[POST] ${postResult.message}`,
+        postResult.details ? `- ${postResult.details}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n')
+    );
+  }, [farmName, farms, webAppUrl]);
 
   const rangeRows = useMemo(() => valueRanges, [valueRanges]);
 
@@ -188,6 +209,8 @@ export function SettingsScreen() {
             <Text style={styles.help}>
               과거값 복구는 `doGet(year, farm)` 응답 형식에 따라 일부 서버 보완이 필요할 수 있습니다.
             </Text>
+            <ActionButton label="웹앱 연결 진단" onPress={() => void runDiagnostics()} variant="secondary" />
+            {diagnosticMessage ? <Text style={styles.help}>{diagnosticMessage}</Text> : null}
             <View style={styles.actions}>
               <ActionButton label="시트에서 복구" onPress={() => void restoreFromSheet()} variant="secondary" />
               <ActionButton
