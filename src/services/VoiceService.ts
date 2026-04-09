@@ -31,9 +31,9 @@ export async function startRecognition(customStrings?: string[]): Promise<void> 
   const contextualStrings = customStrings ?? await buildContextualStrings();
   ExpoSpeechRecognitionModule.start({
     lang: 'ko-KR',
-    interimResults: false,
+    interimResults: true,   // 실시간 표시용
     maxAlternatives: 5,
-    continuous: true,
+    continuous: false,      // 발화 1개씩 처리 (TTS 충돌 방지)
     contextualStrings,
     requiresOnDeviceRecognition: false,
     addsPunctuation: false,

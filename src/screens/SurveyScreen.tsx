@@ -234,6 +234,10 @@ export default function SurveyScreen() {
   const [showManual, setShowManual] = useState(false);
   const [outOfRangeFields, setOutOfRangeFields] = useState<Set<string>>(new Set());
   const [lastVoiceText, setLastVoiceText] = useState('');
+  const [interimText, setInterimText] = useState(''); // 실시간 인식 텍스트
+
+  // 음성 루프 제어
+  const keepListening = useRef(false);
 
   // 세션 편집 모달
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
@@ -426,33 +430,62 @@ export default function SurveyScreen() {
     }
   }
 
-  // 음성인식 이벤트 — 한 번에 하나씩 처리
+  // 음성인식 이벤트 — 실시간 표시 + 최종만 처리
   useSpeechRecognitionEvent('result', async (event) => {
     try {
-      if (!event.isFinal) return;
-
       const alternatives: string[] = event.results
         ? event.results.map((r: { transcript: string }) => r.transcript)
         : [];
       if (alternatives.length === 0) return;
 
-      setLastVoiceText(alternatives[0]);
+      // 쉼표 제거 (STT가 "10,000,022.5" 형태로 줄 때 대비)
+      const cleaned = alternatives.map(a => a.replace(/,/g, ''));
 
-      const token = parseBestAlternative(alternatives, {});
+      // 실시간 표시 (isFinal 아니어도 즉시 보여줌)
+      setInterimText(cleaned[0]);
+
+      if (!event.isFinal) return;
+
+      setInterimText('');
+      setLastVoiceText(cleaned[0]);
+
+      const token = parseBestAlternative(cleaned, {});
+
+      // TTS 말하는 동안 인식 중지 → 완료 후 자동 재시작
+      stopRecognition();
       await processToken(token);
+      if (keepListening.current) {
+        await startRecognition();
+        setIsListening(true);
+      }
     } catch (e) {
       console.error('[SurveyScreen] voice result error:', e);
     }
   });
 
   useSpeechRecognitionEvent('start', () => setIsListening(true));
-  useSpeechRecognitionEvent('end', () => setIsListening(false));
-  useSpeechRecognitionEvent('error', () => setIsListening(false));
+  useSpeechRecognitionEvent('end', () => {
+    // continuous: false → 발화 끝나면 end 발생, keepListening이면 재시작
+    setIsListening(false);
+  });
+  useSpeechRecognitionEvent('error', (e) => {
+    console.warn('[SurveyScreen] STT error:', e);
+    setIsListening(false);
+    // 에러 후에도 재시작
+    if (keepListening.current) {
+      setTimeout(() => {
+        startRecognition().then(() => setIsListening(true)).catch(() => {});
+      }, 500);
+    }
+  });
 
   // 마이크 버튼
   async function handleMicPress() {
-    if (isListening) {
+    if (keepListening.current) {
+      keepListening.current = false;
       stopRecognition();
+      setIsListening(false);
+      setInterimText('');
       speak('음성입력 종료');
       return;
     }
@@ -475,8 +508,10 @@ export default function SurveyScreen() {
       return;
     }
 
-    speak('음성입력 시작');
-    startRecognition();
+    keepListening.current = true;
+    await speak('음성입력 시작');
+    await startRecognition();
+    setIsListening(true);
   }
 
   function ts() { return new Date().toLocaleTimeString('ko-KR'); }
@@ -546,8 +581,12 @@ export default function SurveyScreen() {
 
       {/* ④ 음성 로그 (고정 높이) */}
       <View style={styles.logSection}>
+        {/* 실시간 인식 텍스트 */}
+        {interimText ? (
+          <Text style={styles.interimText}>🎙 {interimText}</Text>
+        ) : null}
         <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
-          {voiceLogs.length === 0 ? (
+          {voiceLogs.length === 0 && !interimText ? (
             <Text style={styles.logEmpty}>음성 입력 대기 중…</Text>
           ) : (
             voiceLogs.slice(0, 8).map(log => (
@@ -715,6 +754,7 @@ const styles = StyleSheet.create({
     minHeight: 80,
   },
   logEmpty: { color: COLORS.textDim, textAlign: 'center', marginTop: 8, fontSize: 12 },
+  interimText: { color: COLORS.accent, fontSize: 13, paddingHorizontal: 4, paddingBottom: 4 },
   logRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginBottom: 4 },
   logTime: { color: COLORS.textDim, fontSize: 9, minWidth: 50, marginTop: 2 },
   logMain: { color: COLORS.primary, fontSize: 13, fontWeight: '700' },
