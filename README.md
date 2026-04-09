@@ -28,6 +28,21 @@ npm run ios:device
 npm run ios:release
 ```
 
+## iPhone 현장 테스트 절차
+1. iPhone을 케이블로 연결하고 잠금 해제 상태로 둔다.
+2. 기기에서 이 Mac을 신뢰하고, `설정 > 개인정보 보호 및 보안 > 개발자 모드`를 켠다.
+3. 루트에서 `npm run ios:dev-client`로 Metro를 연다.
+4. 다른 터미널에서 `npm run ios:test`로 `KMG_iPhone17`에 Debug 앱을 설치한다.
+5. 앱 실행 후 설정 탭에서 조사자, 농가, Apps Script URL을 확인하고 `웹앱 연결 진단`을 실행한다.
+6. 조사 탭에서 `수동 입력`으로 `횡경 52.3`, `종경 48.1`, `응애`, `비고 과실 상태 양호`를 넣는다.
+7. 기록 탭과 진행률 탭에서 로컬 저장과 동기화 상태를 확인한다.
+8. 마지막으로 `음성 시작`을 눌러 Whisper 모델 다운로드와 음성 루프를 시험한다.
+
+## 현재 실기기 blocker
+- 2026-04-09 기준 `xcrun xctrace list devices`에서 `KMG_iPhone17`이 `offline`으로 표시된다.
+- 이 상태에서는 설치/실행을 여기서 더 반복해도 진전이 없고, 먼저 기기 잠금 해제, 신뢰 확인, 개발자 모드 확인, 케이블 재연결이 필요하다.
+- 기기가 `offline`에서 `Devices` 섹션으로 올라오면 위 테스트 절차로 바로 검증 가능하다.
+
 ## 현재 기본 연동값
 - Apps Script URL:
   `https://script.google.com/macros/s/AKfycbzjprz2m4z_JzT-mu0W6kv_-p_YfyFfBcHI7mIYBAApRXoBXAbs1Sv1eZv-JflmReCP/exec`
