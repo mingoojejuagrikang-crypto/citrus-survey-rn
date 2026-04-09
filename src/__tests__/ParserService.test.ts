@@ -1,4 +1,9 @@
 import { parseSingle } from '../services/parser/ParserService';
+import {
+  flattenHistoryResponse,
+  normalizeHistoryRows,
+} from '../services/history/historyParsers';
+import { parseSyncHttpResponse } from '../services/sync/syncParsers';
 import { getDeltaSeverity, getRangeStatus } from '../utils/range';
 import { resolveUndoValue } from '../utils/undo';
 
@@ -79,5 +84,43 @@ describe('undo utils', () => {
       deleteCurrent: false,
       numericValue: 10.5,
     });
+  });
+});
+
+describe('history parsers', () => {
+  it('flattens grouped history response', () => {
+    const rows = flattenHistoryResponse({
+      status: 'ok',
+      data: {
+        비대조사: [{ 조사일자: '2025-08-05', 농가명: '이원창', 라벨: 'A', 처리: '시험', 조사나무: 1, 조사과실: 1, 횡경: 38.7, 종경: 34.9 }],
+        품질조사: [{ 조사일자: '2025-08-06', 농가명: '이원창', 라벨: 'A', 처리: '시험', 조사나무: 1, 조사과실: 1, 당도: 11.2 }],
+      },
+    });
+    expect(rows).toHaveLength(2);
+  });
+
+  it('normalizes wide history rows into item rows', () => {
+    const rows = normalizeHistoryRows(
+      [{ 조사일자: '2025-08-05', 농가명: '이원창', 라벨: 'A', 처리: '시험', 조사나무: 1, 조사과실: 1, 횡경: 38.7, 종경: 34.9 }],
+      '이원창'
+    );
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ itemName: '횡경', value: 38.7 }),
+        expect.objectContaining({ itemName: '종경', value: 34.9 }),
+      ])
+    );
+  });
+});
+
+describe('sync parsers', () => {
+  it('accepts successful json sync response', () => {
+    const parsed = parseSyncHttpResponse(200, 'application/json', '{"success":true}');
+    expect(parsed.ok).toBe(true);
+  });
+
+  it('rejects html sync response', () => {
+    const parsed = parseSyncHttpResponse(200, 'text/html', '<html>error</html>');
+    expect(parsed.ok).toBe(false);
   });
 });

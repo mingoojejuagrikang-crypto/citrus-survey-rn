@@ -1,4 +1,5 @@
 import { GOOGLE_SHEETS_ID } from '../../constants/app';
+import { parseSyncHttpResponse } from '../sync/syncParsers';
 
 type DiagnosticResult = {
   ok: boolean;
@@ -55,58 +56,66 @@ class WebAppDiagnosticsService {
   }
 
   async testSyncPost(webAppUrl: string): Promise<DiagnosticResult> {
-    const response = await fetch(webAppUrl, {
+    const attempts: DiagnosticResult[] = [];
+    const payload = {
+      action: 'upsertSamples',
+      sheetId: GOOGLE_SHEETS_ID,
+      rows: [],
+    };
+
+    const jsonResponse = await fetch(webAppUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        action: 'upsertSamples',
-        sheetId: GOOGLE_SHEETS_ID,
-        rows: [],
-      }),
+      body: JSON.stringify(payload),
+    });
+    const jsonText = await readTextSafely(jsonResponse);
+    const jsonParsed = parseSyncHttpResponse(
+      jsonResponse.status,
+      jsonResponse.headers.get('content-type') ?? '',
+      jsonText
+    );
+    attempts.push({
+      ok: jsonParsed.ok,
+      message: `[json] ${jsonParsed.message}`,
+      details: jsonParsed.details,
     });
 
-    const text = await readTextSafely(response);
-    const contentType = response.headers.get('content-type') ?? '';
+    const formBody = new URLSearchParams({
+      action: 'upsertSamples',
+      sheetId: GOOGLE_SHEETS_ID,
+      rows: '[]',
+    });
+    const formResponse = await fetch(webAppUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: formBody.toString(),
+    });
+    const formText = await readTextSafely(formResponse);
+    const formParsed = parseSyncHttpResponse(
+      formResponse.status,
+      formResponse.headers.get('content-type') ?? '',
+      formText
+    );
+    attempts.push({
+      ok: formParsed.ok,
+      message: `[form] ${formParsed.message}`,
+      details: formParsed.details,
+    });
 
-    if (!response.ok) {
-      return {
-        ok: false,
-        message: `POST 동기화 테스트 실패: ${response.status}`,
-        details: text.slice(0, 200),
-      };
+    const success = attempts.find((entry) => entry.ok);
+    if (success) {
+      return success;
     }
 
-    if (!contentType.includes('application/json')) {
-      return {
-        ok: false,
-        message: 'POST 응답이 JSON이 아닙니다. 웹앱 배포 또는 doPost 구현 확인이 필요합니다.',
-        details: text.slice(0, 200),
-      };
-    }
-
-    try {
-      const parsed = JSON.parse(text) as { success?: boolean; status?: string; message?: string };
-      if (parsed.success === false || parsed.status === 'error') {
-        return {
-          ok: false,
-          message: parsed.message ?? 'POST 동기화 테스트 실패',
-          details: text.slice(0, 200),
-        };
-      }
-      return {
-        ok: true,
-        message: 'POST 동기화 테스트 성공',
-        details: text.slice(0, 200),
-      };
-    } catch {
-      return {
-        ok: false,
-        message: 'POST 응답 JSON 파싱 실패',
-        details: text.slice(0, 200),
-      };
-    }
+    return {
+      ok: false,
+      message: attempts.map((entry) => entry.message).join(' | '),
+      details: attempts.map((entry) => entry.details ?? '').join('\n'),
+    };
   }
 }
 
