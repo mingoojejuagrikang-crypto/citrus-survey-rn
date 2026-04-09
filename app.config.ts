@@ -34,7 +34,7 @@ const config: ExpoConfig = {
   web: {
     favicon: './assets/favicon.png',
   },
-  plugins: ['expo-sqlite'],
+  plugins: ['expo-asset', 'expo-sqlite'],
   extra: {
     googleSheetsId: '1Cdit6rSHr-cfFYMGhNoc0Ju19pKc57RsMpqDGEz4RB8',
     defaultWebAppUrl:

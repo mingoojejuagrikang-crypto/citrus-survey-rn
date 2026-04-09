@@ -1,5 +1,6 @@
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
+import { Platform } from 'react-native';
 import { initWhisper, type WhisperContext } from 'whisper.rn';
 
 import {
@@ -63,8 +64,9 @@ class WhisperService {
     if (!this.context) {
       this.context = await initWhisper({
         filePath: modelPath,
-        useCoreMLIos: true,
-        useGpu: true,
+        // CoreML/GPU 강제는 시뮬레이터와 일부 기기에서 초기화 정체를 만들 수 있어 기본 비활성화한다.
+        useCoreMLIos: false,
+        useGpu: Platform.OS !== 'ios',
       });
     }
     return this.context;

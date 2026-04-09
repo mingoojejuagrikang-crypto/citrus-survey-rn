@@ -13,6 +13,22 @@ type BootstrapResult = {
   customTerms: Awaited<ReturnType<typeof databaseService.listCustomTerms>>;
 };
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 function safeParseJson<T>(value: string | undefined, fallback: T): T {
   if (!value) {
     return fallback;
@@ -36,9 +52,13 @@ export async function bootstrapApp(
   let modelError: string | null = null;
 
   try {
-    await whisperService.initializeContext(({ progress }) => {
-      onModelProgress?.(progress);
-    });
+    await withTimeout(
+      whisperService.initializeContext(({ progress }) => {
+        onModelProgress?.(progress);
+      }),
+      15000,
+      'Whisper 모델 초기화 시간이 초과되었습니다.'
+    );
     modelReady = true;
   } catch (error) {
     modelError = error instanceof Error ? error.message : 'Whisper 모델 초기화에 실패했습니다.';
